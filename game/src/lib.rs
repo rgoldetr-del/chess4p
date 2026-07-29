@@ -12,4 +12,4 @@ pub use board::{
 };
 pub use state::{GameState, Move, EnPassantInfo, BoardState};
 pub use zobrist::get_zobrist;
-pub use tensor::board_to_tensor_slice;
+pub use tensor::{board_to_tensor_slice, TENSOR_PLANES};
