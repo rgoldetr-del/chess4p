@@ -1,21 +1,26 @@
-# Python
-venv/
-__pycache__/
-*.pyc
-
-# Rust
-target/
-
-# Godot
-**/.godot/
-**/*.import
-*.exe
-**/bin/*.dll
-
-# VS Code
+```
+# Build artifacts
+*.import
+*.remap
+export_presets.cfg
+# Dependencies
+addons/*/node_modules/
+addons/*/.venv/
+addons/*/venv/
+# Editor
+.editor/
 .vscode/
-
-training/venv/
-godot-project/.godot/
-*.exe
-**/bin/*.dll
+.idea/
+*.user
+*.userprefs
+*.autosave
+# Logs
+*.log
+# Temporary files
+*.tmp
+*.temp
+# Generated files
+*.gen.*
+*.gdnlib
+*.gdns
+```

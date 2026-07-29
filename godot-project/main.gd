@@ -3,8 +3,9 @@ extends Node2D
 const CELL_SIZE = 64
 const BOARD_SIZE = 14
 const OFFSET = Vector2(30, 30)
-const DRAG_THRESHOLD = 5.0
+const DRAG_THRESHOLD = 0.0
 const DEAD_KING_DELAY = 0.45
+const PIECE_SCALE_FACTOR = 1.15
 
 # ==========================================================
 # Архитектура модели: 30 блоков по 256 каналов (синхронизировано с model.py и lib.rs)
@@ -1083,6 +1084,12 @@ func _input(event):
 					clear_highlights()
 					return
 
+				if selected_cell == cell:
+					selected_cell = -Vector2i.ONE
+					clear_highlights()
+					update_pieces(true)
+					return
+
 				selected_cell = cell
 				if piece_color_code == analyzer.get_current_turn_code():
 					show_possible_moves(cell)
@@ -1093,8 +1100,10 @@ func _input(event):
 				var tex = get_piece_texture(code)
 				if tex:
 					drag_sprite.texture = tex
-					var sc = (CELL_SIZE * 0.9) / tex.get_size().x
-					drag_sprite.scale = Vector2(sc, sc)
+					var tex_size = tex.get_size()
+					if tex_size.x > 0:
+						var sc = (CELL_SIZE * 0.9 * PIECE_SCALE_FACTOR) / tex_size.x
+						drag_sprite.scale = Vector2(sc, sc)
 			else:
 				selected_cell = -Vector2i.ONE
 				clear_highlights()
@@ -1383,7 +1392,7 @@ func update_pieces(instant: bool = false):
 								sp.texture = tex
 								var tex_size = tex.get_size()
 								if tex_size.x > 0:
-									var sc = (CELL_SIZE * 0.9) / tex_size.x
+									var sc = (CELL_SIZE * 0.9 * PIECE_SCALE_FACTOR) / tex_size.x
 									sp.scale = Vector2(sc, sc)
 							sp.position = cell_center(target_pos)
 							sp.set_meta("pos", target_pos)
@@ -1431,7 +1440,7 @@ func update_pieces(instant: bool = false):
 						sp.texture = tex
 						var tex_size = tex.get_size()
 						if tex_size.x > 0:
-							var sc = (CELL_SIZE * 0.9) / tex_size.x
+							var sc = (CELL_SIZE * 0.9 * PIECE_SCALE_FACTOR) / tex_size.x
 							sp.scale = Vector2(sc, sc)
 
 					if old_pos.has(best_sprite_idx) and not instant:
