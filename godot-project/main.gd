@@ -13,8 +13,53 @@ const CHANNELS = 256
 const RES_BLOCKS = 30
 const NUM_PLANES = 73
 
-var move_audio = preload("res://assets/sfx/ficha-de-ajedrez-sound (mp3cut.net).ogg")
+# Пути к звукам
+const SOUNDS = {
+	"capture": "res://assets/sounds/capture.ogg",
+	"castle": "res://assets/sounds/castle.ogg",
+	"click": "res://assets/sounds/click.ogg",
+	"game_end": "res://assets/sounds/game-end.ogg",
+	"illegal": "res://assets/sounds/illegal.ogg",
+	"move_check": "res://assets/sounds/move-check.ogg",
+	"move_opponent": "res://assets/sounds/move-opponent.ogg",
+	"premove": "res://assets/sounds/premove.ogg",
+	"promote": "res://assets/sounds/promote.ogg"
+}
+
+# Пути к фигурам (цвет-фигура)
+const PIECE_PATHS = {
+	"red-pawn": "res://assets/pieces/red-pawn.svg",
+	"red-rook": "res://assets/pieces/red-rook.svg",
+	"red-knight": "res://assets/pieces/red-knight.svg",
+	"red-bishop": "res://assets/pieces/red-bishop.svg",
+	"red-queen": "res://assets/pieces/red-queen.svg",
+	"red-king": "res://assets/pieces/red-king.svg",
+	"blue-pawn": "res://assets/pieces/blue-pawn.svg",
+	"blue-rook": "res://assets/pieces/blue-rook.svg",
+	"blue-knight": "res://assets/pieces/blue-knight.svg",
+	"blue-bishop": "res://assets/pieces/blue-bishop.svg",
+	"blue-queen": "res://assets/pieces/blue-queen.svg",
+	"blue-king": "res://assets/pieces/blue-king.svg",
+	"yellow-pawn": "res://assets/pieces/yellow-pawn.svg",
+	"yellow-rook": "res://assets/pieces/yellow-rook.svg",
+	"yellow-knight": "res://assets/pieces/yellow-knight.svg",
+	"yellow-bishop": "res://assets/pieces/yellow-bishop.svg",
+	"yellow-queen": "res://assets/pieces/yellow-queen.svg",
+	"yellow-king": "res://assets/pieces/yellow-king.svg",
+	"green-pawn": "res://assets/pieces/green-pawn.svg",
+	"green-rook": "res://assets/pieces/green-rook.svg",
+	"green-knight": "res://assets/pieces/green-knight.svg",
+	"green-bishop": "res://assets/pieces/green-bishop.svg",
+	"green-queen": "res://assets/pieces/green-queen.svg",
+	"green-king": "res://assets/pieces/green-king.svg"
+}
+
+# Настройки сложности бота (количество симуляций)
+const BOT_DIFFICULTIES = [100, 400, 1600]
+const BOT_DIFFICULTY_NAMES = ["Легко (100)", "Средне (400)", "Сложно (1600)"]
+
 var piece_textures = {}
+var sound_players = {}
 
 # ==========================================================
 # Узел дерева ходов
@@ -107,6 +152,19 @@ var dead_king_timer = 0.0
 var active_bot_color = 0
 var low_eval_counts = [0, 0, 0, 0]
 var auto_resign_check: CheckBox
+
+# Режим Teams (2v2)
+var teams_mode: bool = false
+var team_red_yellow: bool = true  # true = red+yellow vs blue+green, false = red+blue vs yellow+green
+
+# Индикатор "бот думает"
+var bot_thinking_label: Label
+var bot_progress_bar: ProgressBar
+var bot_difficulty_index: int = 1  # 0=100, 1=400, 2=1600
+
+# Таблица результатов
+var results_dialog: AcceptDialog
+var results_table: VBoxContainer
 
 @onready var board_layer = $Board
 @onready var pieces_layer = $Pieces
@@ -292,6 +350,32 @@ func _create_ui():
 	auto_resign_check.button_pressed = true
 	vbox.add_child(auto_resign_check)
 
+	# Сложность бота
+	var bot_diff_hbox = HBoxContainer.new()
+	var bot_diff_label = Label.new()
+	bot_diff_label.text = "Сложность бота:"
+	bot_diff_hbox.add_child(bot_diff_label)
+	
+	var bot_diff_option = OptionButton.new()
+	for i in range(BOT_DIFFICULTIES.size()):
+		bot_diff_option.add_item(BOT_DIFFICULTY_NAMES[i], i)
+	bot_diff_option.selected = bot_difficulty_index
+	bot_diff_option.item_selected.connect(_on_bot_difficulty_selected)
+	bot_diff_hbox.add_child(bot_diff_option)
+	vbox.add_child(bot_diff_hbox)
+	
+	# Режим Teams (2v2)
+	var teams_check = CheckBox.new()
+	teams_check.text = "Режим команд (2v2)"
+	teams_check.toggled.connect(_on_teams_mode_toggled)
+	vbox.add_child(teams_check)
+	
+	# Кнопка перезапуска
+	var restart_button = Button.new()
+	restart_button.text = "Перезапустить партию"
+	restart_button.pressed.connect(_on_restart_pressed)
+	vbox.add_child(restart_button)
+
 	# Analyzer settings
 	var analyzer_settings_hbox = HBoxContainer.new()
 	var lines_label = Label.new()
@@ -421,17 +505,97 @@ func _disable_bot(bot_idx: int):
 		if btn:
 			btn.set_pressed_no_signal(false)
 
+
+func _on_bot_difficulty_selected(index: int):
+	bot_difficulty_index = index
+
+
+func _on_teams_mode_toggled(pressed: bool):
+	teams_mode = pressed
+
+
+func _on_restart_pressed():
+	# Перезапуск партии
+	analyzer.go_to_move(0)
+	root_node = MoveNode.new()
+	current_node = root_node
+	view_stack.clear()
+	premoves.clear()
+	player_arrow_cells.clear()
+	low_eval_counts = [0, 0, 0, 0]
+	dead_king_timer = 0.0
+	
+	# Сброс состояния доски
+	analyzer.reset_board()
+	
+	# Обновление UI
+	update_pieces(true)
+	update_move_label()
+	_update_move_list()
+	_update_scores()
+	last_move_layer.clear()
+	player_arrows_layer.clear()
+	analysis_arrows_layer.clear()
+	cognitive_layer.clear()
+	premove_layer.clear()
+	
+	play_click_sound()
+
 # ==========================================================
 # Звук
 # ==========================================================
+func _play_sound(sound_name: String) -> void:
+	if not SOUNDS.has(sound_name):
+		push_warning("Звук '%s' не найден" % sound_name)
+		return
+	
+	var path = SOUNDS[sound_name]
+	if not ResourceLoader.exists(path):
+		push_warning("Файл звука '%s' не существует" % path)
+		return
+	
+	var player = AudioStreamPlayer.new()
+	add_child(player)
+	player.stream = load(path)
+	player.play()
+	await player.finished
+	player.queue_free()
+
+
 func play_move_sound():
-	if move_audio:
-		var player = AudioStreamPlayer.new()
-		add_child(player)
-		player.stream = move_audio
-		player.play()
-		await player.finished
-		player.queue_free()
+	_play_sound("move_opponent")
+
+
+func play_capture_sound():
+	_play_sound("capture")
+
+
+func play_castle_sound():
+	_play_sound("castle")
+
+
+func play_click_sound():
+	_play_sound("click")
+
+
+func play_game_end_sound():
+	_play_sound("game_end")
+
+
+func play_illegal_sound():
+	_play_sound("illegal")
+
+
+func play_check_sound():
+	_play_sound("move_check")
+
+
+func play_premove_sound():
+	_play_sound("premove")
+
+
+func play_promote_sound():
+	_play_sound("promote")
 
 # ==========================================================
 # Дерево ходов и навигация
@@ -746,6 +910,21 @@ func _check_auto_resign(bot_value: float):
 
 
 func _refresh_after_move(instant: bool = false):
+	# Определяем тип хода для звука
+	var last_moves = analyzer.get_last_moves_per_color()
+	for lm in last_moves:
+		if lm.has("is_capture") and lm["is_capture"]:
+			play_capture_sound()
+		elif lm.has("is_castle") and lm["is_castle"]:
+			play_castle_sound()
+		elif lm.has("is_promotion") and lm["is_promotion"]:
+			play_promote_sound()
+		elif lm.has("is_check") and lm["is_check"]:
+			play_check_sound()
+		else:
+			play_move_sound()
+		break
+	
 	update_pieces(instant)
 	_update_move_list()
 	update_move_label()
@@ -1116,30 +1295,33 @@ func get_piece_texture(code: int) -> Texture2D:
 	var color_code = code / 10
 	var piece_code = code % 10
 
-	var color_char = ""
+	var color_name = ""
 	match color_code:
-		1: color_char = "r"
-		2: color_char = "b"
-		3: color_char = "y"
-		4: color_char = "g"
+		1: color_name = "red"
+		2: color_name = "blue"
+		3: color_name = "yellow"
+		4: color_name = "green"
 
-	var piece_char = ""
+	var piece_name = ""
 	match piece_code:
-		1: piece_char = "p"
-		2: piece_char = "n"
-		3: piece_char = "b"
-		4: piece_char = "r"
-		5: piece_char = "q"
-		6: piece_char = "k"
+		1: piece_name = "pawn"
+		2: piece_name = "knight"
+		3: piece_name = "bishop"
+		4: piece_name = "rook"
+		5: piece_name = "queen"
+		6: piece_name = "king"
 
-	var path = ""
-	if piece_code == 5:
-		if promoted:
-			path = "res://assets/converted_to_png/Chess_%s%st45.svg.png" % [piece_char, color_char]
-		else:
-			path = "res://assets/converted_to_png/QChess_%s%st45.svg.png" % [piece_char, color_char]
-	else:
-		path = "res://assets/converted_to_png/Chess_%s%st45.svg.png" % [piece_char, color_char]
+	var key = "%s-%s" % [color_name, piece_name]
+	if not PIECE_PATHS.has(key):
+		printerr("Путь к фигуре не найден: ", key)
+		return null
+	
+	var path = PIECE_PATHS[key]
+	
+	# Для превращённой пешки используем текстуру ферзя
+	if promoted and piece_code == 1:
+		key = "%s-queen" % color_name
+		path = PIECE_PATHS[key]
 
 	if not piece_textures.has(path):
 		if ResourceLoader.exists(path):
