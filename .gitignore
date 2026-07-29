@@ -1,0 +1,16 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Rust
+target/
+
+# VS Code
+.vscode/
+
+# Godot (кэш, импорты, exe и dll)
+**/.godot/
+**/*.import
+*.exe
+**/bin/*.dll
