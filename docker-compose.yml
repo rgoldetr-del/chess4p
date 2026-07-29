@@ -1,0 +1,56 @@
+# Docker Compose для Chess4P AI
+version: '3.8'
+
+services:
+  trainer:
+    build:
+      context: .
+      dockerfile: training/Dockerfile
+    container_name: chess4p-trainer
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./models:/app/models
+      - ./runs:/app/runs
+      - ./config.yaml:/app/config.yaml
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+    command: python training/model.py config.yaml
+    restart: unless-stopped
+
+  # Redis для распределённого self-play (опционально)
+  redis:
+    image: redis:7-alpine
+    container_name: chess4p-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    profiles:
+      - distributed
+
+  # WebSocket сервер (опционально)
+  api:
+    build:
+      context: .
+      dockerfile: training/Dockerfile
+    container_name: chess4p-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models:ro
+      - ./config.yaml:/app/config.yaml:ro
+    command: python server/websocket_server.py
+    depends_on:
+      - trainer
+    profiles:
+      - api
+
+volumes:
+  redis_data:

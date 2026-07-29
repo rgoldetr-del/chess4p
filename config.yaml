@@ -1,0 +1,100 @@
+# Chess4P AI Configuration
+# Единый файл настроек для модели, обучения, MCTS и self-play
+
+model:
+  num_blocks: 30
+  channels: 256
+  policy_channels: 64
+  value_channels: 32
+  use_transformer_policy: false  # Экспериментальная фича
+  transformer_heads: 8
+  transformer_layers: 2
+
+training:
+  batch_size: 32
+  accumulation_steps: 8          # Effective batch = 256
+  learning_rate: 0.001
+  weight_decay: 1.0e-4
+  total_iterations: 100000
+  checkpoint_interval: 100       # Сохранение каждые N итераций
+  output_dir: "/kaggle/working"  # Или "./models" локально
+  
+  # Mixed Precision
+  use_amp: true
+  
+  # Warmup & Scheduler
+  warmup_iters: 1000
+  swa_start: 50000               # Начать SWA после N итераций
+  swa_freq: 1000                 # Обновлять SWA каждые N итераций
+  
+  # Validation & Elo
+  val_interval: 200
+  val_batches: 5
+  elo_interval: 2000
+  elo_games: 20
+  elo_threshold: 10              # Порог для сохранения best_model
+
+replay_buffer:
+  capacity: 50000                # Под Kaggle RAM (13GB)
+  alpha: 0.6                     # Priority Exponent
+  beta_start: 0.4                # Importance Sampling Start
+  beta_frames: 100000            # Frames to anneal beta to 1.0
+
+self_play:
+  num_workers: 2                 # Оптимум для 4 ядер CPU
+  mcts_simulations: 100          # На ход
+  mcts_batch_size: 16            # Для GPU инференса
+  max_moves_per_game: 200
+  dirichlet_alpha: 0.15
+  dirichlet_weight: 0.25         # Noise weight at root
+  opening_book_prob: 0.2         # Вероятность начать из книги
+  
+  # Температура
+  temp_schedule:
+    - [20, 1.0]                  # Ход 0-19: temp=1.0
+    - [40, 0.5]                  # Ход 20-39: temp=0.5
+    - [999, 0.1]                 # Ход 40+: temp=0.1
+
+mcts:
+  c_puct: 1.5
+  fpu_value: -1.0                # First Play Urgency (пессимизм)
+  virtual_loss: 1.0
+  use_endgame_tablebase: true    # Для <=3 игроков
+  tablebase_max_pieces: 4        # K+Q vs K vs K...
+
+rules:
+  scoring:
+    pawn: 1
+    knight: 3
+    bishop: 5
+    rook: 5
+    queen: 9
+    promoted_queen: 1
+    king_capture: 0
+    checkmate: 20
+    stalemate_self: 20
+    stalemate_others: 10
+    multi_check_2_queen: 1
+    multi_check_2_other: 5
+    multi_check_3_queen: 5
+    multi_check_3_other: 20
+    
+  features:
+    rule_21_points: true
+    threefold_repetition: true
+    fifty_move_rule: true        # 200 полуходов
+    dead_king_walking: true
+    auto_queen_promotion: true
+    teams_mode: false            # 2v2 по умолчанию выключен
+
+logging:
+  tensorboard: true
+  mlflow: false
+  mlflow_uri: "http://localhost:5000"
+  log_level: "INFO"
+
+hardware:
+  device: "cuda"                 # или "cpu"
+  num_threads: 4
+  torch_compile: true
+  compile_mode: "default"        # "default", "reduce-overhead", "max-autotune"

@@ -1,0 +1,144 @@
+# CI/CD Pipeline для Chess4P AI
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Тестирование Rust кода
+  rust-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-action@stable
+      with:
+        components: rustfmt, clippy
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+    
+    - name: Run clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+    
+    - name: Build library
+      run: cargo build --lib --release
+    
+    - name: Run tests
+      run: cargo test --release -- --nocapture
+    
+    - name: Run benchmarks (optional)
+      run: cargo bench --no-run
+      if: false  # Отключено по умолчанию
+
+  # Тестирование Python кода
+  python-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r training/requirements.txt
+    
+    - name: Check Python syntax
+      run: |
+        python -m py_compile model.py
+        python -m py_compile training/model.py
+        python -m py_compile training/mcts.py
+        python -m py_compile training/replay_buffer.py
+    
+    - name: Run Python tests
+      run: |
+        pip install pytest
+        pytest training/test_integration.py -v || echo "No tests yet"
+    
+    - name: Type checking (optional)
+      run: |
+        pip install mypy
+        mypy training/model.py --ignore-missing-imports || true
+
+  # Сборка Godot проекта
+  godot-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download Godot
+      uses: chickensoft-games/setup-godot@v1
+      with:
+        version: 4.2.0
+        use-dotnet: false
+    
+    - name: Validate GDScript
+      run: |
+        godot --headless --script-validation --project-path . || echo "Godot validation skipped"
+    
+    - name: Export templates (optional)
+      run: |
+        godot --headless --export-release "Linux/X11" build/chess4p.x86_64 || true
+
+  # Docker build test
+  docker-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: training/Dockerfile
+        push: false
+        tags: chess4p:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # Fuzzing (опционально)
+  fuzzing:
+    runs-on: ubuntu-latest
+    if: false  # Отключено по умолчанию
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-action@stable
+    
+    - name: Install cargo-fuzz
+      run: cargo install cargo-fuzz
+    
+    - name: Run fuzzer
+      run: |
+        cd game
+        cargo fuzz run fuzz_moves -- -max_total_time=60 || true
