@@ -869,6 +869,11 @@ impl ChessAnalyzer {
     }
 
     #[func]
+    fn reset_board(&mut self) {
+        self.game_state = GameState::new();
+    }
+
+    #[func]
     fn go_to_move(&mut self, move_idx: i32) -> bool {
         self.game_state.go_to_move(move_idx as usize)
     }

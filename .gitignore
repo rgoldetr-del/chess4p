@@ -1,26 +1,41 @@
 ```
-# Build artifacts
-*.import
-*.remap
-export_presets.cfg
+# Compiled and build artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+
 # Dependencies
-addons/*/node_modules/
-addons/*/.venv/
-addons/*/venv/
-# Editor
-.editor/
+target/
+**/target/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Editors
 .vscode/
 .idea/
-*.user
-*.userprefs
-*.autosave
-# Logs
-*.log
-# Temporary files
-*.tmp
-*.temp
-# Generated files
-*.gen.*
-*.gdnlib
-*.gdns
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Rust-specific
+Cargo.lock
+**/Cargo.lock
 ```
