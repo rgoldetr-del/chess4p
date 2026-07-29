@@ -3,7 +3,7 @@ extends Node2D
 const CELL_SIZE = 64
 const BOARD_SIZE = 14
 const OFFSET = Vector2(30, 30)
-const DRAG_THRESHOLD = 0.0
+const DRAG_THRESHOLD = 5.0
 const DEAD_KING_DELAY = 0.45
 const PIECE_SCALE_FACTOR = 1.15
 
@@ -77,29 +77,36 @@ class MoveNode:
 class OverlayLayer extends Node2D:
 	var items: Array = []
 	var temp_arrow: Dictionary = {}
+	var needs_redraw: bool = false
 
 	func clear() -> void:
 		items.clear()
 		temp_arrow = {}
-		queue_redraw()
+		mark_redraw()
+
+	func mark_redraw() -> void:
+		if not needs_redraw:
+			needs_redraw = true
+			queue_redraw()
 
 	func add_arrow(from: Vector2, to: Vector2, col: Color, width: float = 8.0, outline: bool = true) -> void:
 		items.append({"t": "arrow", "from": from, "to": to, "col": col, "w": width, "outline": outline})
-		queue_redraw()
+		mark_redraw()
 
 	func add_circle(pos: Vector2, radius: float, col: Color, width: float = 4.0, filled: bool = false) -> void:
 		items.append({"t": "circle", "pos": pos, "r": radius, "col": col, "w": width, "filled": filled})
-		queue_redraw()
+		mark_redraw()
 
 	func add_rect(pos: Vector2, size: Vector2, col: Color) -> void:
 		items.append({"t": "rect", "pos": pos, "size": size, "col": col})
-		queue_redraw()
+		mark_redraw()
 
 	func add_text(pos: Vector2, text: String, col: Color, size: int = 14) -> void:
 		items.append({"t": "text", "pos": pos, "text": text, "col": col, "size": size})
-		queue_redraw()
+		mark_redraw()
 
 	func _draw() -> void:
+		needs_redraw = false
 		for it in items:
 			match it["t"]:
 				"arrow":
@@ -545,7 +552,7 @@ func _on_restart_pressed():
 # ==========================================================
 # Звук
 # ==========================================================
-func _play_sound(sound_name: String) -> void:
+func _play_sound(sound_name: String, blocking: bool = false) -> void:
 	if not SOUNDS.has(sound_name):
 		push_warning("Звук '%s' не найден" % sound_name)
 		return
@@ -559,7 +566,8 @@ func _play_sound(sound_name: String) -> void:
 	add_child(player)
 	player.stream = load(path)
 	player.play()
-	await player.finished
+	if blocking:
+		await player.finished
 	player.queue_free()
 
 
@@ -911,7 +919,7 @@ func _check_auto_resign(bot_value: float):
 
 
 func _refresh_after_move(instant: bool = false):
-	# Определяем тип хода для звука
+	# Определяем тип хода для звука — только один звук за ход
 	var last_moves = analyzer.get_last_moves_per_color()
 	for lm in last_moves:
 		if lm.has("is_capture") and lm["is_capture"]:
@@ -924,7 +932,7 @@ func _refresh_after_move(instant: bool = false):
 			play_check_sound()
 		else:
 			play_move_sound()
-		break
+		break  # Только первый ход (чтобы не было двойного срабатывания)
 	
 	update_pieces(instant)
 	_update_move_list()
@@ -1024,7 +1032,7 @@ func _input(event):
 					"to": get_global_mouse_position(),
 					"col": Color(1, 0.15, 0.15, 0.5),
 				}
-				player_arrows_layer.queue_redraw()
+				player_arrows_layer.mark_redraw()
 		else:
 			if right_dragging:
 				right_dragging = false
@@ -1036,13 +1044,13 @@ func _input(event):
 						player_arrow_cells.append([arrow_start_cell, cell])
 						rebuild_player_arrows()
 				else:
-					player_arrows_layer.queue_redraw()
+					player_arrows_layer.mark_redraw()
 
 	if event is InputEventMouseMotion and right_dragging:
 		player_arrows_layer.temp_arrow["to"] = get_global_mouse_position()
-		player_arrows_layer.queue_redraw()
+		player_arrows_layer.mark_redraw()
 
-	# Drag & drop фигур
+	# Drag & drop фигур - мгновенное появление при начале движения
 	if event is InputEventMouseMotion and dragging and not drag_sprite.visible:
 		if event.position.distance_to(drag_start_pos) > DRAG_THRESHOLD:
 			var orig_sprite = get_sprite_at(dragged_cell)
@@ -1051,8 +1059,10 @@ func _input(event):
 			drag_sprite.visible = true
 			drag_sprite.position = get_global_mouse_position()
 
+	# Обновление позиции перетаскиваемой фигуры без задержек
 	if event is InputEventMouseMotion and drag_sprite.visible:
 		drag_sprite.position = get_global_mouse_position()
+		drag_sprite.get_viewport().set_input_as_handled()
 
 	# Левая кнопка
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
