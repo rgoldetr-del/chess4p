@@ -1,0 +1,21 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Rust
+target/
+
+# Godot
+**/.godot/
+**/*.import
+*.exe
+**/bin/*.dll
+
+# VS Code
+.vscode/
+
+training/venv/
+godot-project/.godot/
+*.exe
+**/bin/*.dll
