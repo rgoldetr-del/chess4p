@@ -1,0 +1,18 @@
+# Requirements для Chess4P AI Training
+torch>=2.4.0
+numpy>=1.24.0
+PyYAML>=6.0
+tensorboard>=2.14.0
+tqdm>=4.66.0
+
+# Optional dependencies
+mlflow>=2.8.0  # Для трекинга экспериментов
+pillow>=10.0.0  # Для экспорта в GIF
+
+# Для WebSocket сервера (optional)
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# Для тестирования
+pytest>=7.4.0
