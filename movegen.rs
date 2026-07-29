@@ -17,7 +17,7 @@ pub fn new_move(
     }
 }
 
-pub fn generate_legal_moves(state: &mut GameState) -> Vec<Move> {
+pub fn generate_legal_moves(state: &GameState) -> Vec<Move> {
     let c_idx = state.turn.index();
     if state.dead_colors[c_idx] {
         return Vec::new();
@@ -34,13 +34,15 @@ pub fn generate_legal_moves(state: &mut GameState) -> Vec<Move> {
             let to_idx = sq_index(mv.to.0, mv.to.1);
             let piece_val = state.board[from_idx];
             let captured_val = state.board[to_idx];
-            state.board[from_idx] = EMPTY;
-            state.board[to_idx] = piece_val;
+            // Используем временный board для проверки
+            let mut temp_board = state.board;
+            temp_board[from_idx] = EMPTY;
+            temp_board[to_idx] = piece_val;
             let mut is_attacked = false;
             for &oc in &Color::ALL {
                 if oc != color && !state.dead_colors[oc.index()] {
                     if GameState::is_square_attacked(
-                        &state.board, &state.dead_colors, &state.resigned,
+                        &temp_board, &state.dead_colors, &state.resigned,
                         mv.to.0 as i32, mv.to.1 as i32, oc,
                     ) {
                         is_attacked = true;
@@ -48,60 +50,53 @@ pub fn generate_legal_moves(state: &mut GameState) -> Vec<Move> {
                     }
                 }
             }
-            state.board[from_idx] = piece_val;
-            state.board[to_idx] = captured_val;
             !is_attacked
         });
         return moves;
     }
 
-    let mut moves = generate_pseudo_legal_moves(state);
+    let pseudo_moves = generate_pseudo_legal_moves(state);
     let color = state.turn;
     let king_pos = state.king_positions[c_idx];
-    moves.retain(|mv| {
+    let mut legal_moves = Vec::new();
+    
+    for mv in pseudo_moves {
         let from_idx = sq_index(mv.from.0, mv.from.1);
         let to_idx = sq_index(mv.to.0, mv.to.1);
         let piece_val = state.board[from_idx];
-        state.board[from_idx] = EMPTY;
+        
+        // Создаём временную доску для проверки
+        let mut temp_board = state.board;
+        temp_board[from_idx] = EMPTY;
         let final_piece_val = if let Some(prom) = mv.promotion {
             make_piece_val(color, prom, true)
         } else {
             piece_val
         };
-        let captured_val = state.board[to_idx];
-        state.board[to_idx] = final_piece_val;
+        let captured_val = temp_board[to_idx];
+        temp_board[to_idx] = final_piece_val;
 
-        let mut ep_captured_idx = None;
-        let mut ep_captured_val = EMPTY;
-        let mut rook_from_idx = None;
-        let mut rook_to_idx = None;
-        let mut rook_piece_val = EMPTY;
-
-        if mv.castle != 0 {
-            let (rook_from, rook_to) = state.get_rook_positions(color, mv.castle);
-            rook_from_idx = Some(sq_index(rook_from.0, rook_from.1));
-            rook_to_idx = Some(sq_index(rook_to.0, rook_to.1));
-            if let Some(rf_idx) = rook_from_idx {
-                rook_piece_val = state.board[rf_idx];
-                state.board[rf_idx] = EMPTY;
-                if let Some(rt_idx) = rook_to_idx {
-                    state.board[rt_idx] = rook_piece_val;
-                }
-            }
-        }
-
+        // Обработка взятия на проходе
         if mv.en_passant {
             for i in 0..4 {
                 if let Some(ep) = state.en_passants[i] {
                     if ep.target_sq == mv.to {
                         let v_idx = sq_index(ep.victim_sq.0, ep.victim_sq.1);
-                        ep_captured_idx = Some(v_idx);
-                        ep_captured_val = state.board[v_idx];
-                        state.board[v_idx] = EMPTY;
+                        temp_board[v_idx] = EMPTY;
                         break;
                     }
                 }
             }
+        }
+
+        // Обработка рокировки
+        if mv.castle != 0 {
+            let (rook_from, rook_to) = state.get_rook_positions(color, mv.castle);
+            let rf_idx = sq_index(rook_from.0, rook_from.1);
+            let rt_idx = sq_index(rook_to.0, rook_to.1);
+            let rook_val = temp_board[rf_idx];
+            temp_board[rf_idx] = EMPTY;
+            temp_board[rt_idx] = rook_val;
         }
 
         let check_king_pos = if piece_type(piece_val) == Some(PieceType::King) {
@@ -114,7 +109,7 @@ pub fn generate_legal_moves(state: &mut GameState) -> Vec<Move> {
         for &oc in &Color::ALL {
             if oc != color && !state.dead_colors[oc.index()] {
                 if GameState::is_square_attacked(
-                    &state.board, &state.dead_colors, &state.resigned,
+                    &temp_board, &state.dead_colors, &state.resigned,
                     check_king_pos.0 as i32, check_king_pos.1 as i32, oc,
                 ) {
                     is_attacked = true;
@@ -123,25 +118,14 @@ pub fn generate_legal_moves(state: &mut GameState) -> Vec<Move> {
             }
         }
 
-        // Undo
-        state.board[from_idx] = piece_val;
-        state.board[to_idx] = captured_val;
-        if let Some(v_idx) = ep_captured_idx {
-            state.board[v_idx] = ep_captured_val;
+        if !is_attacked {
+            legal_moves.push(mv);
         }
-        if let Some(rf_idx) = rook_from_idx {
-            state.board[rf_idx] = rook_piece_val;
-            if let Some(rt_idx) = rook_to_idx {
-                state.board[rt_idx] = EMPTY;
-            }
-        }
-
-        !is_attacked
-    });
-    moves
+    }
+    legal_moves
 }
 
-pub fn has_any_legal_move(state: &mut GameState) -> bool {
+pub fn has_any_legal_move(state: &GameState) -> bool {
     let c_idx = state.turn.index();
     if state.dead_colors[c_idx] {
         return false;

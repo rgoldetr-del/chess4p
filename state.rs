@@ -581,25 +581,25 @@ impl GameState {
         false
     }
 
-    pub fn is_checkmate(&mut self, color: Color) -> bool {
+    pub fn is_checkmate(&self, color: Color) -> bool {
         if self.dead_colors[color.index()] {
             return true;
         }
         let orig_turn = self.turn;
         self.turn = color;
-        let has_moves = !self.generate_legal_moves().is_empty();
+        let has_moves = self.has_any_legal_move();
         let in_check = self.is_king_in_check(color);
         self.turn = orig_turn;
         !has_moves && in_check
     }
 
-    pub fn is_stalemate(&mut self, color: Color) -> bool {
+    pub fn is_stalemate(&self, color: Color) -> bool {
         if self.dead_colors[color.index()] {
             return false;
         }
         let orig_turn = self.turn;
         self.turn = color;
-        let has_moves = !self.generate_legal_moves().is_empty();
+        let has_moves = self.has_any_legal_move();
         let in_check = self.is_king_in_check(color);
         self.turn = orig_turn;
         !has_moves && !in_check
@@ -674,8 +674,355 @@ impl GameState {
         movegen::generate_pseudo_legal_moves(self)
     }
 
-    pub fn has_any_legal_move(&mut self) -> bool {
+    pub fn has_any_legal_move(&self) -> bool {
         movegen::has_any_legal_move(self)
+    }
+
+    // ========================================================
+    // unmake_move для MCTS без клонирования
+    // ========================================================
+    pub fn make_move_with_undo(&mut self, from: (usize, usize), to: (usize, usize), promotion_piece: Option<PieceType>) -> Option<UndoInfo> {
+        let from_idx = sq_index(from.0, from.1);
+        let to_idx = sq_index(to.0, to.1);
+        let piece_val = self.board[from_idx];
+        if piece_val == EMPTY {
+            return None;
+        }
+        let color = piece_color(piece_val).unwrap();
+        let p_type = piece_type(piece_val).unwrap();
+        let color_idx = color.index();
+        if self.turn != color {
+            return None;
+        }
+
+        // Сохраняем состояние для unmake
+        let mut undo = UndoInfo {
+            from_idx,
+            to_idx,
+            piece_val,
+            captured_val: EMPTY,
+            captured_idx: to_idx,
+            en_passant: false,
+            ep_captured_idx: None,
+            ep_captured_val: EMPTY,
+            ep_creator_idx: None,
+            castle: 0,
+            rook_from_idx: None,
+            rook_to_idx: None,
+            rook_val: EMPTY,
+            promotion: None,
+            old_en_passant: self.en_passants[color_idx],
+            old_castling_rights: self.castling_rights,
+            old_zobrist: self.zobrist_hash,
+            old_halfmove: self.halfmove_clock,
+            old_king_pos: self.king_positions[color_idx],
+            old_scores: self.scores,
+            old_dead_colors: self.dead_colors,
+            old_turn: self.turn,
+        };
+
+        // En passant detection
+        let mut ep_captured_idx = None;
+        let mut ep_creator_idx = None;
+        if p_type == PieceType::Pawn {
+            for i in 0..4 {
+                if i == color_idx { continue; }
+                if let Some(ep) = self.en_passants[i] {
+                    if ep.target_sq == to {
+                        let creator_idx = ep.creator.index();
+                        if self.dead_colors[creator_idx] || self.resigned[creator_idx] {
+                            continue;
+                        }
+                        let v_idx = sq_index(ep.victim_sq.0, ep.victim_sq.1);
+                        undo.captured_val = self.board[v_idx];
+                        undo.en_passant = true;
+                        ep_captured_idx = Some(v_idx);
+                        ep_creator_idx = Some(i);
+                        undo.ep_captured_idx = Some(v_idx);
+                        undo.ep_captured_val = self.board[v_idx];
+                        undo.ep_creator_idx = Some(i);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if undo.captured_val == EMPTY {
+            undo.captured_val = self.board[to_idx];
+        }
+
+        // Castle detection
+        undo.castle = if p_type == PieceType::King {
+            let dx = to.0 as i32 - from.0 as i32;
+            let dy = to.1 as i32 - from.1 as i32;
+            if dx.abs() == 2 || dy.abs() == 2 {
+                let ci = color.index();
+                let (kx, ky) = (self.castle_king_start[ci].0 as i32, self.castle_king_start[ci].1 as i32);
+                let (rook1, rook2): ((i32, i32), (i32, i32)) = match color {
+                    Color::Red => ((4, 1), (11, 1)),
+                    Color::Blue => ((1, 4), (1, 11)),
+                    Color::Yellow => ((4, 14), (11, 14)),
+                    Color::Green => ((14, 4), (14, 11)),
+                };
+                let d1 = ((rook1.0 - kx).abs() + (rook1.1 - ky).abs()) as usize;
+                let d2 = ((rook2.0 - kx).abs() + (rook2.1 - ky).abs()) as usize;
+                let short_rook = if d1 < d2 { rook1 } else { rook2 };
+                let step_x = (short_rook.0 - kx).signum();
+                let step_y = (short_rook.1 - ky).signum();
+                if dx == step_x * 2 && dy == step_y * 2 { 1 } else { 2 }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        // Promotion
+        undo.promotion = if p_type == PieceType::Pawn
+            && Self::is_promotion_square(to.0 as i32, to.1 as i32, color) {
+            Some(promotion_piece.unwrap_or(PieceType::Queen))
+        } else {
+            None
+        };
+
+        let final_piece_val = if let Some(prom) = undo.promotion {
+            make_piece_val(color, prom, true)
+        } else {
+            piece_val
+        };
+
+        // ---- Zobrist update ----
+        let z = get_zobrist();
+        self.zobrist_hash ^= z.pieces[from_idx][piece_val as usize];
+        self.zobrist_hash ^= z.turn[color_idx];
+        if let Some(old_ep) = self.en_passants[color_idx] {
+            let ep_idx = sq_index(old_ep.target_sq.0, old_ep.target_sq.1);
+            self.zobrist_hash ^= z.ep_squares[ep_idx];
+        }
+        if let Some(ci) = ep_creator_idx {
+            if let Some(ep) = self.en_passants[ci] {
+                let ep_idx = sq_index(ep.target_sq.0, ep.target_sq.1);
+                self.zobrist_hash ^= z.ep_squares[ep_idx];
+                self.en_passants[ci] = None;
+            }
+        }
+
+        // ---- Scoring ----
+        if undo.captured_val != EMPTY {
+            let cap_c = piece_color(undo.captured_val).unwrap().index();
+            let cap_p = piece_type(undo.captured_val).unwrap();
+            if undo.en_passant {
+                let v_idx = undo.ep_captured_idx.unwrap();
+                self.zobrist_hash ^= z.pieces[v_idx][undo.captured_val as usize];
+            } else {
+                self.zobrist_hash ^= z.pieces[to_idx][undo.captured_val as usize];
+            }
+            if !self.dead_colors[cap_c] && !self.resigned[cap_c]
+                && !self.dead_colors[color_idx] && !self.resigned[color_idx] {
+                self.scores[color_idx] += cap_p.capture_points(is_promoted(undo.captured_val));
+            }
+            if cap_p == PieceType::King {
+                self.dead_colors[cap_c] = true;
+            }
+        }
+
+        // ---- Board update ----
+        self.board[from_idx] = EMPTY;
+        self.board[to_idx] = final_piece_val;
+        if undo.en_passant {
+            if let Some(v_idx) = undo.ep_captured_idx {
+                self.board[v_idx] = EMPTY;
+            }
+        }
+        if piece_type(final_piece_val) == Some(PieceType::King) {
+            self.king_positions[color_idx] = to;
+        }
+
+        // ---- piece_positions update ----
+        if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == from_idx) {
+            self.piece_positions[color_idx][pos] = to_idx;
+        }
+        if undo.captured_val != EMPTY {
+            let cap_c = piece_color(undo.captured_val).unwrap().index();
+            let cap_idx = if undo.en_passant { undo.ep_captured_idx.unwrap() } else { to_idx };
+            if let Some(pos) = self.piece_positions[cap_c].iter().position(|&x| x == cap_idx) {
+                self.piece_positions[cap_c].swap_remove(pos);
+            }
+        }
+
+        self.zobrist_hash ^= z.pieces[to_idx][final_piece_val as usize];
+
+        // ---- Castle rook move ----
+        if undo.castle != 0 {
+            let (rook_from, rook_to) = self.get_rook_positions(color, undo.castle);
+            let r_from_idx = sq_index(rook_from.0, rook_from.1);
+            let r_to_idx = sq_index(rook_to.0, rook_to.1);
+            let rook_val = self.board[r_from_idx];
+            undo.rook_from_idx = Some(r_from_idx);
+            undo.rook_to_idx = Some(r_to_idx);
+            undo.rook_val = rook_val;
+            if rook_val != EMPTY {
+                self.board[r_to_idx] = rook_val;
+                self.board[r_from_idx] = EMPTY;
+                if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == r_from_idx) {
+                    self.piece_positions[color_idx][pos] = r_to_idx;
+                }
+                self.zobrist_hash ^= z.pieces[r_from_idx][rook_val as usize];
+                self.zobrist_hash ^= z.pieces[r_to_idx][rook_val as usize];
+            }
+        }
+
+        // ---- Castling rights ----
+        self.update_castling_rights(color, from, to);
+
+        // ---- En passant creation ----
+        self.en_passants[color_idx] = None;
+        if p_type == PieceType::Pawn {
+            let (fx, fy) = Self::forward_vector(color);
+            let dx = to.0 as i32 - from.0 as i32;
+            let dy = to.1 as i32 - from.1 as i32;
+            if dx == fx * 2 && dy == fy * 2 {
+                let mid_x = to.0 as i32 - fx;
+                let mid_y = to.1 as i32 - fy;
+                self.en_passants[color_idx] = Some(EnPassantInfo {
+                    target_sq: (mid_x as usize, mid_y as usize),
+                    victim_sq: to,
+                    creator: color,
+                });
+                let ep_idx = sq_index(mid_x as usize, mid_y as usize);
+                self.zobrist_hash ^= z.ep_squares[ep_idx];
+            }
+        }
+
+        // ---- Halfmove clock ----
+        if p_type == PieceType::Pawn || undo.captured_val != EMPTY {
+            self.halfmove_clock = 0;
+        } else {
+            self.halfmove_clock += 1;
+        }
+
+        // ---- Turn advance ----
+        self.turn = self.turn.next();
+        let mut safety = 0;
+        while self.dead_colors[self.turn.index()] && safety < 5 {
+            self.turn = self.turn.next();
+            safety += 1;
+        }
+
+        // ---- Multi-check bonus ----
+        let mut check_count = 0;
+        for &c in &Color::ALL {
+            if c != color && !self.dead_colors[c.index()] {
+                let (kx, ky) = self.king_positions[c.index()];
+                if kx != 0 && Self::is_square_attacked(
+                    &self.board, &self.dead_colors, &self.resigned,
+                    kx as i32, ky as i32, color,
+                ) {
+                    check_count += 1;
+                }
+            }
+        }
+        if check_count >= 2 && !self.dead_colors[color_idx] && !self.resigned[color_idx] {
+            let bonus = match piece_type(final_piece_val) {
+                Some(PieceType::Queen) => { if check_count == 3 { 5 } else { 1 } }
+                _ => { if check_count == 3 { 20 } else { 5 } }
+            };
+            self.scores[color_idx] += bonus;
+        }
+
+        self.zobrist_hash ^= z.turn[self.turn.index()];
+        self.hash_history.push(self.zobrist_hash);
+        *self.hash_counts.entry(self.zobrist_hash).or_insert(0) += 1;
+        Some(undo)
+    }
+
+    pub fn unmake_move(&mut self, undo: UndoInfo) {
+        let z = get_zobrist();
+        
+        // Восстанавливаем доску
+        self.board[undo.from_idx] = undo.piece_val;
+        if undo.promotion.is_some() {
+            // Если была промоция, восстанавливаем пешку вместо фигуры
+            let color = piece_color(undo.piece_val).unwrap();
+            self.board[undo.from_idx] = make_piece_val(color, PieceType::Pawn, false);
+        }
+        self.board[undo.to_idx] = undo.captured_val;
+        if undo.en_passant {
+            if let Some(v_idx) = undo.ep_captured_idx {
+                self.board[v_idx] = undo.ep_captured_val;
+            }
+        }
+        if undo.castle != 0 {
+            if let (Some(r_from), Some(r_to)) = (undo.rook_from_idx, undo.rook_to_idx) {
+                self.board[r_from] = undo.rook_val;
+                self.board[r_to] = EMPTY;
+            }
+        }
+
+        // Восстанавливаем позиции королей
+        if piece_type(undo.piece_val) == Some(PieceType::King) {
+            let color = piece_color(undo.piece_val).unwrap();
+            self.king_positions[color.index()] = undo.old_king_pos;
+        }
+
+        // Восстанавливаем piece_positions
+        let color = piece_color(undo.piece_val).unwrap();
+        let color_idx = color.index();
+        if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == undo.to_idx) {
+            self.piece_positions[color_idx][pos] = undo.from_idx;
+        }
+        if undo.captured_val != EMPTY {
+            let cap_c = piece_color(undo.captured_val).unwrap().index();
+            let cap_idx = if undo.en_passant { undo.ep_captured_idx.unwrap() } else { undo.to_idx };
+            self.piece_positions[cap_c].push(cap_idx);
+        }
+        if undo.castle != 0 {
+            if let (Some(r_from), Some(_)) = (undo.rook_from_idx, undo.rook_to_idx) {
+                if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == r_from) {
+                    // already at r_from after board restore
+                } else {
+                    self.piece_positions[color_idx].push(r_from);
+                }
+            }
+        }
+
+        // Восстанавливаем castling rights
+        self.castling_rights = undo.old_castling_rights;
+        
+        // Восстанавливаем en passant
+        self.en_passants[color_idx] = undo.old_en_passant;
+        if let Some(ci) = undo.ep_creator_idx {
+            // Восстанавливаем en passant создателя
+            if let Some(ep) = self.en_passants[ci] {
+                // Уже восстановлено через old_en_passant если это тот же цвет
+            }
+        }
+
+        // Восстанавливаем scores, dead_colors
+        self.scores = undo.old_scores;
+        self.dead_colors = undo.old_dead_colors;
+
+        // Восстанавливаем halfmove clock
+        self.halfmove_clock = undo.old_halfmove;
+
+        // Восстанавливаем turn
+        self.turn = undo.old_turn;
+
+        // Восстанавливаем zobrist hash
+        self.zobrist_hash = undo.old_zobrist;
+
+        // Удаляем последний hash из истории
+        if !self.hash_history.is_empty() {
+            let last_hash = self.hash_history.pop().unwrap();
+            if let Some(count) = self.hash_counts.get_mut(&last_hash) {
+                if *count > 0 {
+                    *count -= 1;
+                    if *count == 0 {
+                        self.hash_counts.remove(&last_hash);
+                    }
+                }
+            }
+        }
     }
 
     // ========================================================

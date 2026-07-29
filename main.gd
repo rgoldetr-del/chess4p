@@ -6,6 +6,13 @@ const OFFSET = Vector2(30, 30)
 const DRAG_THRESHOLD = 5.0
 const DEAD_KING_DELAY = 0.45
 
+# ==========================================================
+# Архитектура модели: 30 блоков по 256 каналов (синхронизировано с model.py и lib.rs)
+# ==========================================================
+const CHANNELS = 256
+const RES_BLOCKS = 30
+const NUM_PLANES = 73
+
 var move_audio = preload("res://assets/sfx/ficha-de-ajedrez-sound (mp3cut.net).ogg")
 var piece_textures = {}
 

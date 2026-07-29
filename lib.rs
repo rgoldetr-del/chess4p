@@ -14,10 +14,12 @@ use std::time::{Duration, Instant};
 use chess4p_game::{
     piece_color, piece_type, is_promoted, is_valid_square,
     Board, Color, GameState, Move, PieceType,
-    board_to_tensor_slice,
+    board_to_tensor_slice, TENSOR_PLANES,
 };
 
-const TENSOR_SIZE: usize = 73 * 14 * 14;
+const CHANNELS: usize = 256;
+const RES_BLOCKS: usize = 30;
+const TENSOR_SIZE: usize = TENSOR_PLANES * 14 * 14;
 const POLICY_SIZE: usize = 38416;
 const VALUE_SIZE: usize = 16;
 
@@ -86,6 +88,7 @@ pub struct ChessAnalyzer {
     analyzer_result: Arc<Mutex<Option<Vec<(f32, i64, i64, i64, i64)>>>>,
     analyzer_cancel_flag: Arc<AtomicBool>,
     bot_intents: HashMap<usize, (String, Vec<(usize, usize, usize, usize, String)>)>,
+    transposition_table: HashMap<u64, (u32, [f32; 4], Vec<f32>)>, // hash -> (visits, value, policy)
 }
 
 #[godot_api]
@@ -102,6 +105,7 @@ impl INode for ChessAnalyzer {
             analyzer_result: Arc::new(Mutex::new(None)),
             analyzer_cancel_flag: Arc::new(AtomicBool::new(false)),
             bot_intents: HashMap::new(),
+            transposition_table: HashMap::new(),
         }
     }
 }
@@ -415,12 +419,17 @@ impl ChessAnalyzer {
 
     fn select_child(nodes: &mut Vec<MctsNode>, parent_idx: usize, perspective: Color) -> usize {
         let c_puct = 1.5;
+        let fpu = -0.5; // First Play Urgency для непросмотренных узлов
         let total_parent_visits = (nodes[parent_idx].visits as f32 + 1.0).sqrt();
         let mut best_score = f32::MIN;
         let mut best_child_idx = nodes[parent_idx].children[0];
 
         for &child_idx in &nodes[parent_idx].children {
-            let q = nodes[child_idx].q(perspective);
+            let q = if nodes[child_idx].visits == 0 {
+                fpu // FPU для первого посещения
+            } else {
+                nodes[child_idx].q(perspective)
+            };
             let u = c_puct * nodes[child_idx].prior * total_parent_visits
                 / (1.0 + nodes[child_idx].visits as f32);
             let score = q + u;
@@ -556,7 +565,7 @@ impl ChessAnalyzer {
                 return;
             }
 
-            let shape = vec![1, 73, 14, 14];
+            let shape = vec![1, TENSOR_PLANES as i64, 14, 14];
             let input_value = match Value::from_array((shape, tensor_buffer)) {
                 Ok(v) => v,
                 Err(_) => return,
@@ -1012,7 +1021,7 @@ fn run_model_batch(
         board_to_tensor_slice(&states[i], &mut flat_tensor[start..end]);
     }
 
-    let shape = vec![batch_size as i64, 73, 14, 14];
+    let shape = vec![batch_size as i64, TENSOR_PLANES as i64, 14, 14];
     let input_value = Value::from_array((shape, flat_tensor)).ok()?;
     let mut inputs = HashMap::new();
     inputs.insert("input".to_string(), input_value);

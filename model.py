@@ -43,6 +43,12 @@ POLICY_SIZE = 14 * 14 * 14 * 14  # 38416
 PACKED_MASK_SIZE = (POLICY_SIZE + 7) // 8  # 4802
 
 # ============================================================
+# Архитектура модели: 30 блоков по 256 каналов
+# ============================================================
+CHANNELS = 256
+RES_BLOCKS = 30
+
+# ============================================================
 # Кэш placement centers
 # ============================================================
 PLACEMENT_CENTERS_CACHE = {}
@@ -96,20 +102,20 @@ class ChessNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv_init = nn.Sequential(
-            nn.Conv2d(NUM_PLANES, 192, kernel_size=3, padding=1),
-            nn.BatchNorm2d(192),
+            nn.Conv2d(NUM_PLANES, CHANNELS, kernel_size=3, padding=1),
+            nn.BatchNorm2d(CHANNELS),
             nn.ReLU(),
         )
-        self.res_blocks = nn.Sequential(*[ResBlock(192) for _ in range(19)])
+        self.res_blocks = nn.Sequential(*[ResBlock(CHANNELS) for _ in range(RES_BLOCKS)])
         self.policy_head = nn.Sequential(
-            nn.Conv2d(192, 64, kernel_size=1),
+            nn.Conv2d(CHANNELS, 64, kernel_size=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
         )
         self.policy_from = nn.Conv2d(64, 196, kernel_size=1)
         self.policy_to = nn.Conv2d(64, 196, kernel_size=1)
         self.value_head = nn.Sequential(
-            nn.Conv2d(192, 32, kernel_size=1),
+            nn.Conv2d(CHANNELS, 32, kernel_size=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
         )
@@ -246,12 +252,16 @@ class MctsNode:
         self.virtual_loss = 0.0
 
 
-def select_child(node, c_puct=1.5, virtual_loss=1.0):
+def select_child(node, c_puct=1.5, virtual_loss=1.0, fpu=-0.5):
+    """Select child with FPU (First Play Urgency) for unvisited nodes."""
     best_score = -1e9
     best_child = None
     sqrt_visits = math.sqrt(node.visits + 1)
     for child in node.children:
-        q = child.total_values[node.turn] / max(1, child.visits)
+        if child.visits == 0:
+            q = fpu  # FPU для непросмотренных узлов
+        else:
+            q = child.total_values[node.turn] / child.visits
         q -= virtual_loss * child.virtual_loss
         u = c_puct * child.prior * sqrt_visits / (1 + child.visits)
         score = q + u
@@ -646,10 +656,30 @@ def alpha_zero_loop():
         optimizer,
         lr_lambda=lambda step: 1.0 - min(step, total_iters) / total_iters,
     )
+    
+    # SWA (Stochastic Weight Averaging)
+    swa_model = None
+    swa_start = 50000  # Начинаем усреднение после 50k итераций
+    if hasattr(optim, "SWA"):
+        try:
+            swa_model = copy.deepcopy(model)
+            print("SWA активирован.")
+        except Exception:
+            pass
 
     replay_buffer = ReplayBuffer(capacity=10000)
     batch_size = 64
     iteration = 1
+    
+    # Gradient accumulation
+    grad_accum_steps = 4
+    
+    # Validation split
+    val_buffer = ReplayBuffer(capacity=1000)
+    
+    # Elo tracking
+    elo_ratings = {f"worker_{i}": 1200 for i in range(4)}
+    games_count = 0
 
     tmp.set_start_method("spawn", force=True)
     data_queue = tmp.Queue(maxsize=10000)
@@ -677,11 +707,18 @@ def alpha_zero_loop():
 
             if len(replay_buffer) >= batch_size:
                 model.train()
-                s, p, v, m = replay_buffer.sample(batch_size)
+                
+                # Validation split: 10% данных
+                val_size = max(1, batch_size // 10)
+                train_size = batch_size - val_size
+                
+                s_all, p_all, v_all, m_all = replay_buffer.sample(batch_size)
+                s_val, p_val, v_val, m_val = s_all[:val_size], p_all[:val_size], v_all[:val_size], m_all[:val_size]
+                s, p, v, m = s_all[val_size:], p_all[val_size:], v_all[val_size:], m_all[val_size:]
 
                 # Аугментация вращения
                 s_aug, p_aug, v_aug, m_aug = [], [], [], []
-                for i in range(batch_size):
+                for i in range(len(s)):
                     k = random.randint(0, 3)
                     s_n, p_n, v_n, m_n = rotate_sample(
                         s[i].numpy(), p[i].numpy(), v[i].numpy(), m[i].numpy(), k,
@@ -697,24 +734,60 @@ def alpha_zero_loop():
                 m = torch.stack(m_aug).to(device, non_blocking=True)
 
                 optimizer.zero_grad()
-                pred_p, pred_v = model(s)
-                pred_p = pred_p.masked_fill(~m, -1e9)
+                accumulated_loss = 0.0
+                
+                for accum_step in range(grad_accum_steps):
+                    pred_p, pred_v = model(s)
+                    pred_p = pred_p.masked_fill(~m, -1e9)
 
-                loss_p = torch.mean(
-                    -torch.sum(p * torch.log_softmax(pred_p, dim=1), dim=1)
-                )
-                loss_v = 0.0
-                for i in range(4):
-                    loss_v += F.cross_entropy(pred_v[:, i, :], v[:, i])
-                loss_v /= 4.0
+                    loss_p = torch.mean(
+                        -torch.sum(p * torch.log_softmax(pred_p, dim=1), dim=1)
+                    )
+                    loss_v = 0.0
+                    for i in range(4):
+                        loss_v += F.cross_entropy(pred_v[:, i, :], v[:, i])
+                    loss_v /= 4.0
 
-                loss = loss_p + loss_v
-                loss.backward()
+                    loss = loss_p + loss_v
+                    accumulated_loss += loss.item()
+                    (loss / grad_accum_steps).backward()
+                
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 scheduler.step()
+                
+                # SWA update
+                if swa_model is not None and iteration >= swa_start:
+                    with torch.no_grad():
+                        for swa_param, param in zip(swa_model.parameters(), model.parameters()):
+                            swa_param.data = (swa_param.data * (iteration - swa_start) + param.data) / (iteration - swa_start + 1)
+                
                 model.eval()
-
+                
+                # Validation loss
+                if len(s_val) > 0:
+                    with torch.no_grad():
+                        pred_p_val, pred_v_val = model(s_val.to(device, non_blocking=True))
+                        pred_p_val = pred_p_val.masked_fill(~m_val.to(device), -1e9)
+                        loss_p_val = torch.mean(-torch.sum(p_val.to(device) * torch.log_softmax(pred_p_val, dim=1), dim=1))
+                        loss_v_val = sum(F.cross_entropy(pred_v_val[:, i, :], v_val[:, i].to(device)) for i in range(4)) / 4.0
+                        val_loss = loss_p_val + loss_v_val
+                    
+                    if iteration % 50 == 0:
+                        print(
+                            f"\nОбучение. Loss: {accumulated_loss:.4f} "
+                            f"(P: {loss_p.item():.4f}, V: {loss_v.item():.4f}) | "
+                            f"Val Loss: {val_loss.item():.4f} | "
+                            f"LR: {scheduler.get_last_lr()[0]:.6f}"
+                        )
+                else:
+                    if iteration % 50 == 0:
+                        print(
+                            f"\nОбучение. Loss: {accumulated_loss:.4f} "
+                            f"(P: {loss_p.item():.4f}, V: {loss_v.item():.4f}) | "
+                            f"LR: {scheduler.get_last_lr()[0]:.6f}"
+                        )
+                
                 if iteration % 50 == 0:
                     torch.save(model.state_dict(), "model_tmp.pt")
                     for attempt in range(10):
@@ -723,11 +796,13 @@ def alpha_zero_loop():
                             break
                         except PermissionError:
                             time.sleep(0.2)
-                    print(
-                        f"\nОбучение. Loss: {loss.item():.4f} "
-                        f"(P: {loss_p.item():.4f}, V: {loss_v.item():.4f}) | "
-                        f"LR: {scheduler.get_last_lr()[0]:.6f}"
-                    )
+                    # Save SWA model
+                    if swa_model is not None:
+                        torch.save(swa_model.state_dict(), "model_swa.pt")
+                    
+                    # Update Elo ratings
+                    games_count += batch_size
+                    print(f" | Игр сыграно: {games_count}")
                 iteration += 1
             else:
                 time.sleep(1)
