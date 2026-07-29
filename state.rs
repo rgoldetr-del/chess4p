@@ -226,7 +226,7 @@ impl GameState {
             castle_king_start: king_pos,
         };
 
-        let z = get_zobrist();
+        let _z = get_zobrist();
         let mut hash = 0u64;
         for i in 0..196 {
             if state.board[i] != EMPTY {
@@ -585,11 +585,11 @@ impl GameState {
         if self.dead_colors[color.index()] {
             return true;
         }
-        let orig_turn = self.turn;
-        self.turn = color;
-        let has_moves = self.has_any_legal_move();
-        let in_check = self.is_king_in_check(color);
-        self.turn = orig_turn;
+        // Временно меняем turn через clone для проверки
+        let mut temp_state = self.clone_light();
+        temp_state.set_turn(color);
+        let has_moves = temp_state.has_any_legal_move();
+        let in_check = temp_state.is_king_in_check(color);
         !has_moves && in_check
     }
 
@@ -597,11 +597,11 @@ impl GameState {
         if self.dead_colors[color.index()] {
             return false;
         }
-        let orig_turn = self.turn;
-        self.turn = color;
-        let has_moves = self.has_any_legal_move();
-        let in_check = self.is_king_in_check(color);
-        self.turn = orig_turn;
+        // Временно меняем turn через clone для проверки
+        let mut temp_state = self.clone_light();
+        temp_state.set_turn(color);
+        let has_moves = temp_state.has_any_legal_move();
+        let in_check = temp_state.is_king_in_check(color);
         !has_moves && !in_check
     }
 
@@ -722,22 +722,22 @@ impl GameState {
         };
 
         // En passant detection
-        let mut ep_captured_idx = None;
-        let mut ep_creator_idx = None;
+        let mut _ep_captured_idx = None;
+        let mut _ep_creator_idx = None;
         if p_type == PieceType::Pawn {
             for i in 0..4 {
                 if i == color_idx { continue; }
-                if let Some(ep) = self.en_passants[i] {
-                    if ep.target_sq == to {
-                        let creator_idx = ep.creator.index();
+                if let Some(_ep) = self.en_passants[i] {
+                    if _ep.target_sq == to {
+                        let creator_idx = _ep.creator.index();
                         if self.dead_colors[creator_idx] || self.resigned[creator_idx] {
                             continue;
                         }
-                        let v_idx = sq_index(ep.victim_sq.0, ep.victim_sq.1);
+                        let v_idx = sq_index(_ep.victim_sq.0, _ep.victim_sq.1);
                         undo.captured_val = self.board[v_idx];
                         undo.en_passant = true;
-                        ep_captured_idx = Some(v_idx);
-                        ep_creator_idx = Some(i);
+                        _ep_captured_idx = Some(v_idx);
+                        _ep_creator_idx = Some(i);
                         undo.ep_captured_idx = Some(v_idx);
                         undo.ep_captured_val = self.board[v_idx];
                         undo.ep_creator_idx = Some(i);
@@ -792,7 +792,7 @@ impl GameState {
         };
 
         // ---- Zobrist update ----
-        let z = get_zobrist();
+        let _z = get_zobrist();
         self.zobrist_hash ^= z.pieces[from_idx][piece_val as usize];
         self.zobrist_hash ^= z.turn[color_idx];
         if let Some(old_ep) = self.en_passants[color_idx] {
@@ -800,7 +800,7 @@ impl GameState {
             self.zobrist_hash ^= z.ep_squares[ep_idx];
         }
         if let Some(ci) = ep_creator_idx {
-            if let Some(ep) = self.en_passants[ci] {
+            if let Some(_ep) = self.en_passants[ci] {
                 let ep_idx = sq_index(ep.target_sq.0, ep.target_sq.1);
                 self.zobrist_hash ^= z.ep_squares[ep_idx];
                 self.en_passants[ci] = None;
@@ -839,13 +839,13 @@ impl GameState {
         }
 
         // ---- piece_positions update ----
-        if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == from_idx) {
-            self.piece_positions[color_idx][pos] = to_idx;
+        if let Some(_pos) = self.piece_positions[color_idx].iter().position(|&x| x == from_idx) {
+            self.piece_positions[_color_idx][_pos] = to_idx;
         }
         if undo.captured_val != EMPTY {
             let cap_c = piece_color(undo.captured_val).unwrap().index();
             let cap_idx = if undo.en_passant { undo.ep_captured_idx.unwrap() } else { to_idx };
-            if let Some(pos) = self.piece_positions[cap_c].iter().position(|&x| x == cap_idx) {
+            if let Some(_pos) = self.piece_positions[cap_c].iter().position(|&x| x == cap_idx) {
                 self.piece_positions[cap_c].swap_remove(pos);
             }
         }
@@ -864,8 +864,8 @@ impl GameState {
             if rook_val != EMPTY {
                 self.board[r_to_idx] = rook_val;
                 self.board[r_from_idx] = EMPTY;
-                if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == r_from_idx) {
-                    self.piece_positions[color_idx][pos] = r_to_idx;
+                if let Some(_pos) = self.piece_positions[color_idx].iter().position(|&x| x == r_from_idx) {
+                    self.piece_positions[_color_idx][_pos] = r_to_idx;
                 }
                 self.zobrist_hash ^= z.pieces[r_from_idx][rook_val as usize];
                 self.zobrist_hash ^= z.pieces[r_to_idx][rook_val as usize];
@@ -937,7 +937,7 @@ impl GameState {
     }
 
     pub fn unmake_move(&mut self, undo: UndoInfo) {
-        let z = get_zobrist();
+        let _z = get_zobrist();
         
         // Восстанавливаем доску
         self.board[undo.from_idx] = undo.piece_val;
@@ -968,8 +968,8 @@ impl GameState {
         // Восстанавливаем piece_positions
         let color = piece_color(undo.piece_val).unwrap();
         let color_idx = color.index();
-        if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == undo.to_idx) {
-            self.piece_positions[color_idx][pos] = undo.from_idx;
+        if let Some(_pos) = self.piece_positions[color_idx].iter().position(|&x| x == undo.to_idx) {
+            self.piece_positions[color_idx][_pos] = undo.from_idx;
         }
         if undo.captured_val != EMPTY {
             let cap_c = piece_color(undo.captured_val).unwrap().index();
@@ -978,7 +978,7 @@ impl GameState {
         }
         if undo.castle != 0 {
             if let (Some(r_from), Some(_)) = (undo.rook_from_idx, undo.rook_to_idx) {
-                if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == r_from) {
+                if let Some(_pos) = self.piece_positions[color_idx].iter().position(|&x| x == r_from) {
                     // already at r_from after board restore
                 } else {
                     self.piece_positions[color_idx].push(r_from);
@@ -991,9 +991,9 @@ impl GameState {
         
         // Восстанавливаем en passant
         self.en_passants[color_idx] = undo.old_en_passant;
-        if let Some(ci) = undo.ep_creator_idx {
+        if let Some(_ci) = undo.ep_creator_idx {
             // Восстанавливаем en passant создателя
-            if let Some(ep) = self.en_passants[ci] {
+            if let Some(_ep) = self.en_passants[_ci] {
                 // Уже восстановлено через old_en_passant если это тот же цвет
             }
         }
@@ -1079,7 +1079,7 @@ impl GameState {
         if p_type == PieceType::Pawn {
             for i in 0..4 {
                 if i == color_idx { continue; }
-                if let Some(ep) = self.en_passants[i] {
+                if let Some(_ep) = self.en_passants[i] {
                     if ep.target_sq == to {
                         let creator_idx = ep.creator.index();
                         if self.dead_colors[creator_idx] || self.resigned[creator_idx] {
@@ -1141,7 +1141,7 @@ impl GameState {
         };
 
         // ---- Zobrist update ----
-        let z = get_zobrist();
+        let _z = get_zobrist();
         self.zobrist_hash ^= z.pieces[from_idx][piece_val as usize];
         self.zobrist_hash ^= z.turn[color_idx];
         if let Some(old_ep) = self.en_passants[color_idx] {
@@ -1149,7 +1149,7 @@ impl GameState {
             self.zobrist_hash ^= z.ep_squares[ep_idx];
         }
         if let Some(ci) = ep_creator_idx {
-            if let Some(ep) = self.en_passants[ci] {
+            if let Some(_ep) = self.en_passants[ci] {
                 let ep_idx = sq_index(ep.target_sq.0, ep.target_sq.1);
                 self.zobrist_hash ^= z.ep_squares[ep_idx];
                 self.en_passants[ci] = None;
@@ -1190,13 +1190,13 @@ impl GameState {
         }
 
         // ---- piece_positions update ----
-        if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == from_idx) {
-            self.piece_positions[color_idx][pos] = to_idx;
+        if let Some(_pos) = self.piece_positions[color_idx].iter().position(|&x| x == from_idx) {
+            self.piece_positions[_color_idx][_pos] = to_idx;
         }
         if captured_val != EMPTY {
             let cap_c = piece_color(captured_val).unwrap().index();
             let cap_idx = if en_passant { ep_captured_idx.unwrap() } else { to_idx };
-            if let Some(pos) = self.piece_positions[cap_c].iter().position(|&x| x == cap_idx) {
+            if let Some(_pos) = self.piece_positions[cap_c].iter().position(|&x| x == cap_idx) {
                 self.piece_positions[cap_c].swap_remove(pos);
             }
         }
@@ -1212,8 +1212,8 @@ impl GameState {
             if rook_val != EMPTY {
                 self.board[r_to_idx] = rook_val;
                 self.board[r_from_idx] = EMPTY;
-                if let Some(pos) = self.piece_positions[color_idx].iter().position(|&x| x == r_from_idx) {
-                    self.piece_positions[color_idx][pos] = r_to_idx;
+                if let Some(_pos) = self.piece_positions[color_idx].iter().position(|&x| x == r_from_idx) {
+                    self.piece_positions[_color_idx][_pos] = r_to_idx;
                 }
                 self.zobrist_hash ^= z.pieces[r_from_idx][rook_val as usize];
                 self.zobrist_hash ^= z.pieces[r_to_idx][rook_val as usize];
@@ -1388,7 +1388,7 @@ impl GameState {
     }
 
     fn update_castling_rights(&mut self, color: Color, from: (usize, usize), to: (usize, usize)) {
-        let z = get_zobrist();
+        let _z = get_zobrist();
         let ci = color.index();
         let ks = self.castle_king_start[ci];
         if from == ks && self.castling_rights[ci][0] {
@@ -1527,7 +1527,7 @@ impl GameState {
             mv.castle = 255;
         }
         self.move_history.push(mv);
-        let z = get_zobrist();
+        let _z = get_zobrist();
         self.zobrist_hash ^= z.turn[self.turn.index()];
         self.turn = self.turn.next();
         let mut safety = 0;
@@ -1543,7 +1543,7 @@ impl GameState {
     }
 
     pub fn pass_turn(&mut self) {
-        let z = get_zobrist();
+        let _z = get_zobrist();
         self.zobrist_hash ^= z.turn[self.turn.index()];
         self.turn = self.turn.next();
         let mut safety = 0;
