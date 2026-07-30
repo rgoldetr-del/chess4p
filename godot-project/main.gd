@@ -552,6 +552,9 @@ func _on_restart_pressed():
 # ==========================================================
 # Звук
 # ==========================================================
+var audio_pool: Array = []
+const MAX_AUDIO_PLAYERS = 16
+
 func _play_sound(sound_name: String, blocking: bool = false) -> void:
 	if not SOUNDS.has(sound_name):
 		push_warning("Звук '%s' не найден" % sound_name)
@@ -562,13 +565,33 @@ func _play_sound(sound_name: String, blocking: bool = false) -> void:
 		push_warning("Файл звука '%s' не существует" % path)
 		return
 	
-	var player = AudioStreamPlayer.new()
-	add_child(player)
+	# Очищаем пул от завершённых плееров
+	for i in range(audio_pool.size() - 1, -1, -1):
+		if not is_instance_valid(audio_pool[i]) or not audio_pool[i].playing:
+			audio_pool.remove_at(i)
+	
+	# Используем пул готовых плееров или создаём новый
+	var player: AudioStreamPlayer = null
+	if audio_pool.size() < MAX_AUDIO_PLAYERS:
+		player = AudioStreamPlayer.new()
+		player.bus = "Master"
+		add_child(player)
+		audio_pool.append(player)
+	else:
+		# Берём самый старый неиграющий плеер
+		for p in audio_pool:
+			if is_instance_valid(p) and not p.playing:
+				player = p
+				break
+		if not player:
+			# Все играют - пропускаем звук (лучше чем обрезать)
+			return
+	
 	player.stream = load(path)
+	player.volume_db = 0.0
 	player.play()
 	if blocking:
 		await player.finished
-	player.queue_free()
 
 
 func play_move_sound():
@@ -1095,11 +1118,13 @@ func _input(event):
 					return
 
 				if selected_cell == cell:
+				# Повторный клик по той же фигуре - сбрасываем выделение
 					selected_cell = -Vector2i.ONE
 					clear_highlights()
 					update_pieces(true)
 					return
 
+				# Выделяем новую фигуру
 				selected_cell = cell
 				if piece_color_code == analyzer.get_current_turn_code():
 					show_possible_moves(cell)
@@ -1130,8 +1155,7 @@ func _input(event):
 							update_pieces(true)
 					else:
 						update_pieces(true)
-				selected_cell = -Vector2i.ONE
-				clear_highlights()
+                                # Не сбрасываем selected_cell и highlights здесь - это происходит при следующем нажатии
 
 
 func is_shape_valid(code: int, from_cell: Vector2i, to_cell: Vector2i) -> bool:
@@ -1503,15 +1527,17 @@ func show_possible_moves(from_cell: Vector2i):
 	clear_highlights()
 	if from_cell == -Vector2i.ONE:
 		return
-	var moves = analyzer.get_legal_moves()
-	for m in moves:
-		if m.from_x == from_cell.x and m.from_y == from_cell.y:
-			highlights_layer.add_circle(
-				cell_center(Vector2i(m.to_x, m.to_y)),
-				CELL_SIZE * 0.15,
-				Color(0.2, 0.6, 1.0, 0.8),
-				4.0, true
-			)
+	# Не сбрасываем выделение, если показываем ходы для той же клетки
+	if from_cell == selected_cell:
+		var moves = analyzer.get_legal_moves()
+		for m in moves:
+			if m.from_x == from_cell.x and m.from_y == from_cell.y:
+				highlights_layer.add_circle(
+					cell_center(Vector2i(m.to_x, m.to_y)),
+					CELL_SIZE * 0.15,
+					Color(0.2, 0.6, 1.0, 0.8),
+					4.0, true
+				)
 
 # ==========================================================
 # Когнитивная визуализация
