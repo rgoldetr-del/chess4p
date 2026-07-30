@@ -1,0 +1,16 @@
+# Chess4P Screen Bot Requirements
+
+# Screen capture
+mss>=9.0.1
+# dxcam>=0.2  # Windows only, optional for faster capture
+
+# Computer vision
+opencv-python>=4.8.0
+
+# Mouse control
+pyautogui>=0.9.54
+# Alternative: pynput>=1.7.6
+
+# Core dependencies (already in training/requirements.txt)
+torch>=2.0.0
+numpy>=1.24.0

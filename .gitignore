@@ -1,45 +1,35 @@
 ```
-# Compiled and build artifacts НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-*.o
-*.obj
-*.a
-*.lib
-*.so
-*.dll
-*.dylib
-*.exe
-*.out
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# Dependencies  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-target/
-**/target/
-
-# Logs and temp files  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-*.log
-*.tmp
-*.swp
-
-# Editors  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Environment  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
+# Dependencies
+venv/
+.venv/
 .env
 .env.local
 *.env.*
 
-# Coverage  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+.coverage
 coverage/
 htmlcov/
-.coverage
 
-# Rust-specific  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-Cargo.lock
-**/Cargo.lock
+# Build directories
+build/
+dist/
 ```
-training/venv/
-godot-project/.godot/
-*.exe
-**/bin/*.dll
