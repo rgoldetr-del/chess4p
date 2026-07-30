@@ -1155,7 +1155,7 @@ func _input(event):
 							update_pieces(true)
 					else:
 						update_pieces(true)
-                                # Не сбрасываем selected_cell и highlights здесь - это происходит при следующем нажатии
+								# Не сбрасываем selected_cell и highlights здесь - это происходит при следующем нажатии
 
 
 func is_shape_valid(code: int, from_cell: Vector2i, to_cell: Vector2i) -> bool:
