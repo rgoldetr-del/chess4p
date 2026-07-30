@@ -1,45 +1,24 @@
 ```
-# Compiled and build artifacts НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-*.o
-*.obj
-*.a
-*.lib
-*.so
-*.dll
-*.dylib
-*.exe
-*.out
+# Build artifacts
+*.import
+*.import*
+export_presets.cfg
+.runtime/
+.addons/
 
-# Dependencies  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-target/
-**/target/
+# Editor files
+.godot/
+*.tscn~
+*.gdns~
+*.gdnlib~
+*.tres~
+*.res~
 
-# Logs and temp files  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
+# Logs
 *.log
-*.tmp
-*.swp
 
-# Editors  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Environment  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
+# Environment
 .env
 .env.local
-*.env.*
-
-# Coverage  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-coverage/
-htmlcov/
-.coverage
-
-# Rust-specific  НЕ ТРОГАЙ ЭТОТ ФАЙЛ!!!!!!!!!!!!!
-Cargo.lock
-**/Cargo.lock
+.env.*
 ```
-training/venv/
-godot-project/.godot/
-*.exe
-**/bin/*.dll
