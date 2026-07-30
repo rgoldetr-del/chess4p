@@ -1,45 +1,32 @@
 ```
 # Compiled and build artifacts
-*.o
-*.obj
-*.a
-*.lib
-*.so
-*.dll
-*.dylib
-*.exe
-*.out
+*.pyc
+__pycache__/
 
 # Dependencies
-target/
-**/target/
+.venv/
+venv/
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
 
-# Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-
 # Environment
 .env
 .env.local
 *.env.*
 
-# Coverage
-coverage/
-htmlcov/
-.coverage
+# Editors
+.vscode/
+.idea/
 
-# Rust-specific
-Cargo.lock
-**/Cargo.lock
+# Build directories
+build/
+dist/
+
+# Godot specific
+.godot/
+*.import
+export_presets.cfg
 ```
-training/venv/
-godot-project/.godot/
-*.exe
-**/bin/*.dll
