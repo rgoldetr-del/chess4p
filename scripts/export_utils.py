@@ -153,47 +153,6 @@ def render_board_frame(
     return img
 
 
-def export_game_video(
-    pgn_path: str,
-    output_path: str,
-    fps: int = 2,
-    resolution: tuple = (1920, 1080)
-):
-    """
-    Экспорт партии в видео через Godot headless.
-    """
-    import subprocess
-    
-    # Godot проект для рендеринга
-    godot_project = "export/render_game.tscn"
-    
-    if not os.path.exists(godot_project):
-        print(f"Godot project not found: {godot_project}")
-        return
-    
-    # Команда Godot
-    cmd = [
-        "godot",
-        "--headless",
-        "--path", "export",
-        "--script", "render_game.gd",
-        "--",
-        "--pgn", pgn_path,
-        "--output", output_path,
-        "--fps", str(fps),
-        "--resolution", f"{resolution[0]}x{resolution[1]}"
-    ]
-    
-    print(f"Running: {' '.join(cmd)}")
-    
-    try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print(result.stdout)
-    except subprocess.CalledProcessError as e:
-        print(f"Error rendering video: {e}")
-        print(e.stderr)
-
-
 def generate_stats(pgn_path: str) -> Dict[str, Any]:
     """
     Генерация статистики по PGN файлу.

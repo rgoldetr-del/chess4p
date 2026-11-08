@@ -38,9 +38,6 @@ debug/
 bot/templates/*.png
 bot/calibration/*.json
 
-# --- Godot ---
-godot-project/.godot/
-godot-project/Godot_v4.6.2-stable_win64.exe
 *.gdextension
 
 # --- OS ---

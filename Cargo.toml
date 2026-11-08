@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "game",
     "pyo3-bindings",
-    "godot-extension",
+    "gui",
 ]
 [profile.release]
 opt-level = 3
