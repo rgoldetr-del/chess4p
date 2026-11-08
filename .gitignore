@@ -50,3 +50,6 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# ONNX Runtime DLLs (скачиваются отдельно)
+gui/ort_runtime/
