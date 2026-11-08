@@ -372,10 +372,10 @@ pub fn draw_board(
     }
 
     // --- Правая кнопка: круги и стрелки (как на chess.com) ---
-    let (mods, sec_clicked, sec_released, sec_down, pointer_pos) = ui.input(|i| {
+    let (mods, sec_pressed, sec_released, sec_down, pointer_pos) = ui.input(|i| {
         (
             i.modifiers,
-            i.pointer.button_clicked(egui::PointerButton::Secondary),
+            i.pointer.button_pressed(egui::PointerButton::Secondary),
             i.pointer.button_released(egui::PointerButton::Secondary),
             i.pointer.button_down(egui::PointerButton::Secondary),
             i.pointer.interact_pos(),
@@ -412,7 +412,7 @@ pub fn draw_board(
         marks.clear();
     }
 
-    if sec_clicked {
+    if sec_pressed {
         marks.drag_from = square_at(pointer_pos);
     }
     if sec_released {
@@ -465,8 +465,9 @@ pub fn draw_board(
         }
     }
 
-    // Обработка клика (клики по пустым углам игнорируются)
-    let clicked = response.interact_pointer_pos().and_then(|pos: Pos2| {
+    // Обработка клика ЛЕВОЙ кнопкой (клики по пустым углам игнорируются)
+    let clicked = if response.clicked() {
+        response.interact_pointer_pos().and_then(|pos: Pos2| {
         let dx = (pos.x - origin.x) / cell;
         let dy = (pos.y - origin.y) / cell;
         if !(0.0..14.0).contains(&dx) || !(0.0..14.0).contains(&dy) {
@@ -479,7 +480,10 @@ pub fn draw_board(
             return None;
         }
         Some((x, y))
-    });
+        })
+    } else {
+        None
+    };
 
     BoardResponse {
         clicked,

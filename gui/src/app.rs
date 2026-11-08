@@ -580,6 +580,24 @@ fn install_piece_font(cc: &eframe::CreationContext<'_>) -> bool {
 
 impl eframe::App for Chess4pApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Навигация по истории стрелками клавиатуры (только на вкладке «Игра»)
+        let (left, right) = ctx.input(|i| (
+            i.key_pressed(egui::Key::ArrowLeft),
+            i.key_pressed(egui::Key::ArrowRight),
+        ));
+        if self.tab == Tab::Game && (left || right) {
+            let n = self.state.move_history.len();
+            let cur = self.review_idx.unwrap_or(n);
+            if left && cur > 0 {
+                self.review_idx = Some(cur - 1);
+                self.invalidate();
+            } else if right {
+                let next = cur + 1;
+                self.review_idx = if next >= n { None } else { Some(next) };
+                self.invalidate();
+            }
+        }
+
         // Автопилот ботов
         self.bot_autopilot();
 
@@ -925,10 +943,39 @@ impl Chess4pApp {
         ui.label(format!("Ходов: {n}"));
 
         ui.horizontal(|ui| {
+            let n = self.state.move_history.len();
             let live = !self.is_reviewing();
-            if ui.add_enabled(!live, egui::Button::new("▶ К текущей")).clicked() {
+            let cur = self.review_idx.unwrap_or(n);
+
+            // ⏮ в начало (позиция 0 = стартовая расстановка)
+            if ui.add_enabled(cur > 0, egui::Button::new("⏮")).clicked() {
+                self.review_idx = Some(0);
+                self.invalidate();
+            }
+            // ◀ на ход назад
+            if ui.add_enabled(cur > 0, egui::Button::new("◀")).clicked() {
+                self.review_idx = Some(cur - 1);
+                self.invalidate();
+            }
+            // ▶ на ход вперёд
+            if ui.add_enabled(live || cur < n, egui::Button::new("▶")).clicked() {
+                let next = cur + 1;
+                if next >= n {
+                    self.review_idx = None; // вернулись к текущей позиции
+                } else {
+                    self.review_idx = Some(next);
+                }
+                self.invalidate();
+            }
+            // ⏭ к текущей позиции
+            if ui.add_enabled(live || cur < n, egui::Button::new("⏭")).clicked() {
                 self.review_idx = None;
                 self.invalidate();
+            }
+            if live {
+                ui.label(RichText::new("(текущая)").weak().small());
+            } else {
+                ui.label(RichText::new(format!("{} / {}", cur, n)).weak().small());
             }
         });
 
