@@ -149,6 +149,62 @@ fn piece_letter(pt: PieceType, promoted: bool) -> &'static str {
     }
 }
 
+/// Цвета разметки: зелёный (по умолчанию), красный (Shift), синий (Ctrl), жёлтый (Alt)
+/// Цвет пометки по индексу: 0 зелёный, 1 красный (Shift), 2 синий (Ctrl), 3 жёлтый (Alt)
+#[inline]
+pub fn mark_color(ci: usize) -> Color32 {
+    const COLORS: [(u8, u8, u8); 4] = [
+        (0, 160, 70),    // зелёный
+        (200, 40, 40),   // красный (Shift)
+        (50, 110, 220),  // синий (Ctrl)
+        (230, 200, 30),  // жёлтый (Alt)
+    ];
+    let (r, g, b) = COLORS[ci.min(3)];
+    Color32::from_rgba_unmultiplied(r, g, b, 170)
+}
+
+/// Пользовательские пометки на доске: стрелки и круги (правая кнопка мыши)
+#[derive(Default)]
+pub struct BoardMarks {
+    /// (fx, fy, tx, ty, color_idx)
+    pub arrows: Vec<(usize, usize, usize, usize, usize)>,
+    /// ((x, y), color_idx)
+    pub circles: Vec<((usize, usize), usize)>,
+    /// Текущий drag правой кнопкой (откуда начал тянуть)
+    drag_from: Option<(usize, usize)>,
+}
+
+impl BoardMarks {
+    pub fn clear(&mut self) {
+        self.arrows.clear();
+        self.circles.clear();
+        self.drag_from = None;
+    }
+
+    fn toggle_arrow(&mut self, from: (usize, usize), to: (usize, usize), ci: usize) {
+        let pos = self
+            .arrows
+            .iter()
+            .position(|&(a, b, c, d, _)| (a, b) == from && (c, d) == to);
+        match pos {
+            Some(i) => {
+                self.arrows.remove(i);
+            }
+            None => self.arrows.push((from.0, from.1, to.0, to.1, ci)),
+        }
+    }
+
+    fn toggle_circle(&mut self, sq: (usize, usize), ci: usize) {
+        let pos = self.circles.iter().position(|&(s, _)| s == sq);
+        match pos {
+            Some(i) => {
+                self.circles.remove(i);
+            }
+            None => self.circles.push((sq, ci)),
+        }
+    }
+}
+
 pub struct BoardResponse {
     pub clicked: Option<(usize, usize)>,
     pub hovered: bool,
@@ -166,6 +222,7 @@ pub fn draw_board(
     last_move: Option<((usize, usize), (usize, usize))>,
     textures: Option<&PieceTextures>,
     font_ok: bool,
+    marks: &mut BoardMarks,
 ) -> BoardResponse {
     let board_px = cell * 14.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(board_px), Sense::click());
@@ -314,6 +371,100 @@ pub fn draw_board(
         );
     }
 
+    // --- Правая кнопка: круги и стрелки (как на chess.com) ---
+    let (mods, sec_clicked, sec_released, sec_down, pointer_pos) = ui.input(|i| {
+        (
+            i.modifiers,
+            i.pointer.button_clicked(egui::PointerButton::Secondary),
+            i.pointer.button_released(egui::PointerButton::Secondary),
+            i.pointer.button_down(egui::PointerButton::Secondary),
+            i.pointer.interact_pos(),
+        )
+    });
+    let mark_color_idx = if mods.shift {
+        1
+    } else if mods.ctrl {
+        2
+    } else if mods.alt {
+        3
+    } else {
+        0
+    };
+
+    let square_at = |pos: Option<Pos2>| -> Option<(usize, usize)> {
+        let pos = pos?;
+        let dx = (pos.x - origin.x) / cell;
+        let dy = (pos.y - origin.y) / cell;
+        if !(0.0..14.0).contains(&dx) || !(0.0..14.0).contains(&dy) {
+            return None;
+        }
+        let x = dx.floor() as usize + 1;
+        let y = (14.0 - dy).floor() as usize + 1;
+        let y = y.clamp(1, 14);
+        if is_void(x, y) {
+            return None;
+        }
+        Some((x, y))
+    };
+
+    // ЛЕВАЯ кнопка — очистить всё нарисованное
+    if response.clicked() {
+        marks.clear();
+    }
+
+    if sec_clicked {
+        marks.drag_from = square_at(pointer_pos);
+    }
+    if sec_released {
+        if let Some(from) = marks.drag_from.take() {
+            match square_at(pointer_pos) {
+                Some(to) if to == from => marks.toggle_circle(from, mark_color_idx),
+                Some(to) => marks.toggle_arrow(from, to, mark_color_idx),
+                None => {}
+            }
+        }
+    }
+
+    // --- Рисуем круги ---
+    for &((x, y), ci) in &marks.circles {
+        let p0 = origin + Vec2::new((x - 1) as f32 * cell, (14 - y) as f32 * cell);
+        let center = p0 + Vec2::splat(cell) * 0.5;
+        painter.circle_stroke(
+            center,
+            cell * 0.44,
+            Stroke::new(cell * 0.09, mark_color(ci)),
+        );
+    }
+
+    // --- Рисуем стрелки (поверх фигур) ---
+    for &(fx, fy, tx, ty, ci) in &marks.arrows {
+        draw_arrow(painter, origin, cell, (fx, fy), (tx, ty), mark_color(ci));
+    }
+
+    // --- Превью стрелки во время перетаскивания ---
+    if sec_down && marks.drag_from.is_some() {
+        let from = marks.drag_from.unwrap();
+        if let Some(to) = square_at(pointer_pos) {
+            let preview = Color32::from_rgba_unmultiplied(
+                mark_color(mark_color_idx).r(),
+                mark_color(mark_color_idx).g(),
+                mark_color(mark_color_idx).b(),
+                90,
+            );
+            if to != from {
+                draw_arrow(painter, origin, cell, from, to, preview);
+            } else {
+                // превью круга
+                let p0 = origin + Vec2::new((from.0 - 1) as f32 * cell, (14 - from.1) as f32 * cell);
+                painter.circle_stroke(
+                    p0 + Vec2::splat(cell) * 0.5,
+                    cell * 0.44,
+                    Stroke::new(cell * 0.09, preview),
+                );
+            }
+        }
+    }
+
     // Обработка клика (клики по пустым углам игнорируются)
     let clicked = response.interact_pointer_pos().and_then(|pos: Pos2| {
         let dx = (pos.x - origin.x) / cell;
@@ -334,6 +485,50 @@ pub fn draw_board(
         clicked,
         hovered: response.hovered(),
     }
+}
+
+/// Стрелка в стиле chess.com: полупрозрачная линия с наконечником
+fn draw_arrow(
+    painter: &egui::Painter,
+    origin: Pos2,
+    cell: f32,
+    from: (usize, usize),
+    to: (usize, usize),
+    color: Color32,
+) {
+    let c = |(x, y): (usize, usize)| -> Pos2 {
+        origin + Vec2::new((x - 1) as f32 * cell + cell * 0.5, (14 - y) as f32 * cell + cell * 0.5)
+    };
+    let a = c(from);
+    let b = c(to);
+    let dir = Vec2::new(b.x - a.x, b.y - a.y);
+    let len = dir.length();
+    if len < 1.0 {
+        return;
+    }
+    let unit = dir / len;
+
+    // Хвост отступает от центра на 0.35 клетки, наконечник — треугольник 0.42 клетки
+    let head = 0.42 * cell;
+    let tail = 0.35 * cell;
+    let start = a + unit * tail;
+    let end = b - unit * head;
+
+    if (end - start).length() > 2.0 {
+        painter.line_segment([start, end], Stroke::new(cell * 0.14, color));
+    }
+
+    // Наконечник (треугольник)
+    let perp = Vec2::new(-unit.y, unit.x);
+    let tip = b - unit * cell * 0.08;
+    let p1 = tip - unit * head + perp * head * 0.6;
+    let p2 = tip - unit * head - perp * head * 0.6;
+    let shape = egui::Shape::convex_polygon(
+        vec![tip, p1, p2],
+        color,
+        Stroke::NONE,
+    );
+    painter.add(shape);
 }
 
 fn highlight_cell(

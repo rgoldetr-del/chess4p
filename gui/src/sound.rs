@@ -12,20 +12,20 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum SoundEvent {
-    Click,    // выбор фигуры
     Move,     // обычный ход
+    Check,    // ход с шахом
     Capture,  // взятие
     Castle,   // рокировка
     Promote,  // превращение
-    Illegal,  // запрещённый ход / клик мимо
+    Illegal,  // запрещённый ход
     GameEnd,  // партия окончена
 }
 
 impl SoundEvent {
     fn file(self) -> &'static str {
         match self {
-            SoundEvent::Click => "click.wav",
-            SoundEvent::Move => "move-check.wav",
+            SoundEvent::Move => "move-opponent.wav",
+            SoundEvent::Check => "move-check.wav",
             SoundEvent::Capture => "capture.wav",
             SoundEvent::Castle => "castle.wav",
             SoundEvent::Promote => "promote.wav",
@@ -36,8 +36,8 @@ impl SoundEvent {
 
     fn cooldown(self) -> Duration {
         match self {
-            SoundEvent::Click => Duration::from_millis(80),
-            SoundEvent::Move => Duration::from_millis(280),
+            SoundEvent::Move => Duration::from_millis(260),
+            SoundEvent::Check => Duration::from_millis(350),
             SoundEvent::Capture => Duration::from_millis(350),
             SoundEvent::Castle => Duration::from_millis(350),
             SoundEvent::Promote => Duration::from_millis(350),
@@ -58,8 +58,8 @@ impl SoundPlayer {
         // Читаем файлы заранее (wav 30-70 КБ каждый)
         let mut files: HashMap<SoundEvent, Vec<u8>> = HashMap::new();
         for ev in [
-            SoundEvent::Click,
             SoundEvent::Move,
+            SoundEvent::Check,
             SoundEvent::Capture,
             SoundEvent::Castle,
             SoundEvent::Promote,

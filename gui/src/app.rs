@@ -98,6 +98,7 @@ pub struct Chess4pApp {
     sounds: SoundPlayer,
     board_zoom: f32,
     game_over_played: bool,
+    marks: board::BoardMarks,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -180,6 +181,7 @@ impl Chess4pApp {
             }),
             board_zoom,
             game_over_played: false,
+            marks: board::BoardMarks::default(),
         };
 
         // Диагностический режим: CHESS4P_GUI_AUTOBOT=1 — все 4 места боты
@@ -371,7 +373,6 @@ impl Chess4pApp {
             if val != chess4p_game::EMPTY && chess4p_game::piece_color(val) == Some(self.state.turn) {
                 self.selected = Some(sq);
                 self.legal_cache = None;
-                self.sounds.play(SoundEvent::Click);
             }
         }
     }
@@ -392,6 +393,7 @@ impl Chess4pApp {
         self.pending_for = None;
         self.last_result = None;
         self.game_over_played = false;
+        self.marks.clear();
         self.status = "Новая партия".into();
     }
 
@@ -524,6 +526,8 @@ fn sound_for_move(m: &Move) -> SoundEvent {
         SoundEvent::Promote
     } else if m.captured.is_some() {
         SoundEvent::Capture
+    } else if m.check {
+        SoundEvent::Check
     } else {
         SoundEvent::Move
     }
@@ -731,6 +735,7 @@ impl Chess4pApp {
                 last_move,
                 self.piece_textures.as_ref(),
                 self.font_ok,
+                &mut self.marks,
             );
 
             // Колесо мыши над доской тоже меняет зум
