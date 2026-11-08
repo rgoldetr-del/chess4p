@@ -31,6 +31,43 @@ from bot.model_utils import ChessNet256, load_state_dict_from_path  # noqa: E402
 from server.model_utils import ChessNet100  # noqa: E402
 
 
+class ExportNet256(torch.nn.Module):
+    """Обёртка над ChessNet256 для DML-совместимого ONNX-экспорта.
+
+    Заменяет F.adaptive_avg_pool2d(v, 4) (не экспортируется legacy-экспортёром
+    при 14->4 и рождает Reshape-узлы, которые ломает DirectML) на точный
+    эквивалент — два matmul с фиксированной матрицей окна усреднения.
+    """
+
+    def __init__(self, m: ChessNet256):
+        super().__init__()
+        self.m = m
+        # Окна adaptive_avg_pool2d(14 -> 4): start = floor(i*14/4), end = ceil((i+1)*14/4)
+        w = torch.zeros(4, 14)
+        for i in range(4):
+            s = (i * 14) // 4
+            e = -(-((i + 1) * 14) // 4)  # ceil
+            w[i, s:e] = 1.0 / (e - s)
+        self.register_buffer("pool_w", w)
+
+    def forward(self, x):
+        m = self.m
+        x = m.conv_init(x)
+        x = m.res_blocks(x)
+
+        p = m.policy_head(x)
+        p = m.policy_out(p)
+        policy_logits = p.flatten(1)
+
+        v = m.value_head(x)                              # [B, C, 14, 14]
+        v = torch.matmul(self.pool_w, v)                 # усреднение строк -> [B, C, 4, 14]
+        v = torch.matmul(v, self.pool_w.transpose(0, 1)) # усреднение столбцов -> [B, C, 4, 4]
+        v = v.flatten(1)
+        v = m.value_fc(v)
+        v = v.view(-1, 4, 4)
+        return policy_logits, v
+
+
 def detect_architecture(sd: dict) -> dict:
     """Определяет planes/blocks/channels и вариант policy head по state_dict."""
     conv_w = sd.get("conv_init.0.weight")
@@ -82,14 +119,15 @@ def build_model(sd: dict):
         )
         missing, unexpected = model.load_state_dict(sd, strict=False)
     else:
-        model = ChessNet256(
+        inner = ChessNet256(
             planes=arch["planes"],
             blocks=arch["blocks"],
             channels=arch["channels"],
             policy_channels=arch["policy_channels"] or 256,
             value_channels=arch["value_channels"] or 64,
         )
-        missing, unexpected = model.load_state_dict(sd, strict=False)
+        missing, unexpected = inner.load_state_dict(sd, strict=False)
+        model = ExportNet256(inner)
 
     # strict=False допускает отсутствие только НЕобязательных частей;
     # критичные слои проверяем вручную.
@@ -102,10 +140,22 @@ def build_model(sd: dict):
         print(f"⚠ Отсутствуют слои: {real_missing[:8]}{'...' if len(real_missing) > 8 else ''}")
 
     model.eval()
+
+    # Проверяем, что обёртка даёт побитово те же выходы, что исходная модель
+    if not arch["low_rank_policy"]:
+        with torch.no_grad():
+            xin = torch.randn(2, arch["planes"], 14, 14)
+            po, vo = model.m(xin)
+            pw, vw = model(xin)
+            if torch.allclose(po, pw, atol=1e-4) and torch.allclose(vo, vw, atol=1e-4):
+                print("✅ Обёртка эквивалентна исходной модели")
+            else:
+                raise RuntimeError("Обёртка экспорта отличается от исходной модели!")
+
     return model, arch
 
 
-def verify_onnx(path: str, planes: int):
+def verify_onnx(path: str, planes: int, batch: int = 16):
     try:
         import numpy as np
         import onnxruntime as ort
@@ -114,7 +164,7 @@ def verify_onnx(path: str, planes: int):
         return
 
     sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
-    x = np.random.randn(1, planes, 14, 14).astype(np.float32)
+    x = np.random.randn(batch, planes, 14, 14).astype(np.float32)
     policy, value = sess.run(None, {"input": x})
     print(f"✅ Проверка ONNX: policy {policy.shape}, value {value.shape}")
 
@@ -149,22 +199,23 @@ def main():
           f"channels={arch['channels']}, "
           f"policy={'low-rank (ChessNet100)' if arch['low_rank_policy'] else 'full-rank (ChessNet256)'}")
 
-    dummy = torch.randn(1, arch["planes"], 14, 14)
+    dummy = torch.randn(16, arch["planes"], 14, 14)
 
-    print(f"💾 Экспорт в {out_path} ...")
+    print(f"💾 Экспорт в {out_path} (статический batch=16, для DirectML) ...")
+    # ВАЖНО:
+    # 1) без dynamic_axes — DML не поддерживает Reshape с символьными размерностями;
+    # 2) dynamo=False (legacy TorchScript-экспортёр) — даёт простой граф из
+    #    стандартных операций (Conv/Relu/MatMul/Gemm), который принимает DirectML;
+    #    новый dynamo-экспортёр генерирует view/reshape-узлы, на которых DML падает.
     torch.onnx.export(
         model,
         dummy,
         out_path,
         input_names=["input"],
         output_names=["policy", "value"],
-        dynamic_axes={
-            "input": {0: "batch"},
-            "policy": {0: "batch"},
-            "value": {0: "batch"},
-        },
         opset_version=17,
         do_constant_folding=True,
+        dynamo=False,
     )
     print("✅ Экспорт завершён")
 

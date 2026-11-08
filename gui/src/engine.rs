@@ -19,6 +19,7 @@ use ort::session::builder::SessionBuilder;
 const POLICY_SIZE: usize = 38416; // 196 * 196
 const VALUE_SIZE: usize = 16; // 4 * 4
 const INF_PLANES: usize = 100; // возможный вариант архитектуры ChessNet100
+const INFER_BATCH: usize = 16; // фиксированный batch ONNX-модели (требование DirectML)
 
 // ============================================================
 // Публичные типы
@@ -71,21 +72,49 @@ impl Engine {
     pub fn load(&mut self, path: &str) -> Result<String, String> {
         // DirectML.dll должен быть доступен рядом с exe; и явно указываем,
         // какую onnxruntime.dll грузить (System32 идёт раньше PATH в поиске DLL).
-        if let Ok(cwd) = std::env::current_dir() {
-            let ort_dir = cwd.join("ort_runtime");
-            if ort_dir.join("onnxruntime.dll").exists() {
-                std::env::set_var(
-                    "ORT_DYLIB_PATH",
-                    ort_dir.join("onnxruntime.dll").to_string_lossy().to_string(),
-                );
-                if ort_dir.join("DirectML.dll").exists() {
-                    if let Ok(old_path) = std::env::var("PATH") {
-                        std::env::set_var(
-                            "PATH",
-                            format!("{};{}", ort_dir.display(), old_path),
-                        );
+        let ort_dir: Option<std::path::PathBuf> = {
+            let mut found = None;
+            if let Ok(cwd) = std::env::current_dir() {
+                if cwd.join("ort_runtime/onnxruntime.dll").exists() {
+                    found = Some(cwd.join("ort_runtime"));
+                }
+            }
+            if found.is_none() {
+                if let Ok(exe) = std::env::current_exe() {
+                    if let Some(dir) = exe.parent() {
+                        if dir.join("ort_runtime/onnxruntime.dll").exists() {
+                            found = Some(dir.join("ort_runtime"));
+                        }
                     }
                 }
+            }
+            found
+        };
+        if let Some(ort_dir) = ort_dir {
+            std::env::set_var(
+                "ORT_DYLIB_PATH",
+                ort_dir.join("onnxruntime.dll").to_string_lossy().to_string(),
+            );
+            // Предзагружаем ПАРУННЫЙ DirectML.dll до onnxruntime.dll —
+            // иначе процесс может уже держать старый System32\DirectML.dll,
+            // и ORT получит несовместимую версию (E_INVALIDARG).
+            // (Точно так же делает python-пакет onnxruntime-directml.)
+            let dml = ort_dir.join("DirectML.dll");
+            if dml.exists() {
+                // SAFETY: загрузка системной библиотеки по явному пути;
+                // ошибки загрузки обрабатываются ниже.
+                match unsafe { libloading::Library::new(&dml) } {
+                    Ok(lib) => std::mem::forget(lib), // держим до конца процесса
+                    Err(e) => {
+                        return Err(format!("Не удалось предзагрузить {}: {e}", dml.display()))
+                    }
+                }
+            }
+            if let Ok(old_path) = std::env::var("PATH") {
+                std::env::set_var(
+                    "PATH",
+                    format!("{};{}", ort_dir.display(), old_path),
+                );
             }
         }
 
@@ -98,7 +127,7 @@ impl Engine {
                 .map_err(|e| format!("optimization: {e}"))?;
             if dml {
                 let b = b
-                    .with_execution_providers([DirectML::default().build()])
+                    .with_execution_providers([DirectML::default().with_device_id(0).build()])
                     .map_err(|e| format!("execution providers: {e}"))?;
                 Ok(b)
             } else {
@@ -123,11 +152,17 @@ impl Engine {
 
         // 2. Пробуем DirectML; если GPU-сессия не работает — остаёмся на CPU.
         let mut used_dml = false;
-        if let Ok(mut dml_session) = make_builder(true)?.commit_from_file(path) {
-            if self.probe(&mut dml_session, planes).is_ok() {
-                self.session = Some(Arc::new(Mutex::new(dml_session)));
-                used_dml = true;
+        let mut dml_error = String::new();
+        match make_builder(true)?.commit_from_file(path) {
+            Ok(mut dml_session) => {
+                if self.probe(&mut dml_session, planes).is_ok() {
+                    self.session = Some(Arc::new(Mutex::new(dml_session)));
+                    used_dml = true;
+                } else if let Err(e) = self.probe(&mut dml_session, planes) {
+                    dml_error = e;
+                }
             }
+            Err(e) => dml_error = e.to_string(),
         }
         if !used_dml {
             self.session = Some(Arc::new(Mutex::new(cpu_session)));
@@ -139,22 +174,30 @@ impl Engine {
             .unwrap_or_default();
 
         let msg = format!(
-            "Модель {} загружена ({} плоскостей, {})",
+            "Модель {} загружена ({} плоскостей, {}{})",
             self.model_name,
             planes,
-            if used_dml { "DirectML (GPU)" } else { "CPU" }
+            if used_dml { "DirectML (GPU)" } else { "CPU" },
+            if used_dml {
+                String::new()
+            } else if dml_error.is_empty() {
+                ", DirectML недоступен".to_string()
+            } else {
+                format!(", DirectML недоступен: {}", dml_error)
+            }
         );
         Ok(msg)
     }
 
     fn probe(&self, session: &mut Session, planes: usize) -> Result<(), String> {
-        let data = vec![0.0f32; planes * 196];
-        let value = ort::value::Tensor::from_array((vec![1i64, planes as i64, 14, 14], data))
-            .map_err(|e| e.to_string())?;
+        let data = vec![0.0f32; INFER_BATCH * planes * 196];
+        let value = ort::value::Tensor::from_array((
+            vec![INFER_BATCH as i64, planes as i64, 14, 14],
+            data,
+        ))
+        .map_err(|e| e.to_string())?;
         let inputs = ort::inputs!["input" => value];
-        session
-            .run(inputs)
-            .map_err(|e| e.to_string())?;
+        session.run(inputs).map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -506,21 +549,26 @@ fn run_model_batch(
     planes: usize,
     states: &[GameState],
 ) -> Option<(Vec<Vec<f32>>, Vec<[f32; 4]>)> {
-    let batch = states.len();
-    if batch == 0 {
+    if states.is_empty() {
         return Some((Vec::new(), Vec::new()));
     }
+
+    // Модель экспортирована с фиксированным batch (INFER_BATCH): дополняем
+    // неполный батч копиями первого состояния (лишние выходы игнорируются).
+    let batch = INFER_BATCH;
 
     // board_to_tensor_slice заполняет буфер 256 плоскостей; модель может
     // принимать подмножество (100), поэтому копируем нужный префикс.
     let mut full = vec![0.0f32; batch * TENSOR_SIZE];
-    for (i, st) in states.iter().enumerate() {
+    for i in 0..batch {
+        let st = &states[i.min(states.len() - 1)];
         board_to_tensor_slice(st, &mut full[i * TENSOR_SIZE..(i + 1) * TENSOR_SIZE]);
     }
     let used = planes * 196;
     let mut flat = vec![0.0f32; batch * used];
     for i in 0..batch {
-        flat[i * used..(i + 1) * used].copy_from_slice(&full[i * TENSOR_SIZE..i * TENSOR_SIZE + used]);
+        flat[i * used..(i + 1) * used]
+            .copy_from_slice(&full[i * TENSOR_SIZE..i * TENSOR_SIZE + used]);
     }
 
     let value = ort::value::Tensor::from_array((

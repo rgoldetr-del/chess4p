@@ -15,21 +15,30 @@
 ## Сборка и запуск GUI
 
 ```bat
-cargo run --release -p chess4p-gui
+cd gui
+cargo run --release
 ```
 
 Требуется (один раз):
-1. **ONNX Runtime DLL**: папка `gui/ort_runtime/` с `onnxruntime.dll` + `DirectML.dll`.
-   Проще всего — поставить pip-пакет `onnxruntime-directml` и скопировать
+1. **ONNX Runtime DLL** — папка `gui/ort_runtime/` с тремя файлами:
+   `onnxruntime.dll`, `DirectML.dll`, `onnxruntime_providers_shared.dll`.
+   Проще всего: поставить pip-пакет `onnxruntime-directml` и скопировать
    `.../site-packages/onnxruntime/capi/*.dll` в `gui/ort_runtime/`.
+   При запуске release-сборки можно также положить эти DLL рядом с exe.
 2. **Модель**: сконвертируйте веса:
    ```bat
    python scripts\export_onnx.py C:\chess4p\bot\model.pt
    ```
-   Полученные `model.onnx` (+ `model.onnx.data`, если появится) положите:
-   - рядом с exe, или
-   - в папку запуска (`gui/`), или
-   - укажите путь во вкладке «⚙ Настройки».
+   Экспортёр сам определяет архитектуру (30x256 / 19x192) и экспортирует
+   статический batch=16 (требование DirectML). Полученный `model.onnx`
+   положите в `gui/` (или укажите путь во вкладке «⚙ Настройки»);
+   если появится `model.onnx.data` — положите его рядом.
+
+GPU: бот работает через **DirectML** (любая DirectX 12 видеокарта, включая
+GTX 1060). Если DirectML недоступен, GUI автоматически откатывается на CPU
+(на старых CPU без AVX2 это единственный вариант — предсобранные pyke-сборки
+ORT требуют AVX2). Диагностический режим: `ORT_LOG=verbose` +
+`cargo run --example dml_test`.
 
 ## Как играть
 
