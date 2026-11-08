@@ -90,6 +90,7 @@ pub struct Chess4pApp {
     settings: Settings,
     runner: ScriptRunner,
     font_ok: bool,
+    piece_textures: Option<board::PieceTextures>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -123,6 +124,22 @@ impl Chess4pApp {
         }
         app_log(&format!("model_path = {:?}", settings.model_path));
 
+        // Спрайты фигур: assets/pieces рядом с exe или в текущей папке
+        let piece_textures = {
+            let mut dir = None;
+            if std::path::Path::new("assets/pieces").exists() {
+                dir = Some(std::path::PathBuf::from("assets/pieces"));
+            } else if let Ok(exe) = std::env::current_exe() {
+                if let Some(d) = exe.parent() {
+                    let p = d.join("assets/pieces");
+                    if p.exists() {
+                        dir = Some(p);
+                    }
+                }
+            }
+            dir.and_then(|d| board::PieceTextures::load(&cc.egui_ctx, &d))
+        };
+
         let mut app = Self {
             state: GameState::new(),
             seats: Default::default(),
@@ -138,6 +155,7 @@ impl Chess4pApp {
             settings,
             runner: ScriptRunner::default(),
             font_ok,
+            piece_textures,
         };
 
         // Диагностический режим: CHESS4P_GUI_AUTOBOT=1 — все 4 места боты
@@ -629,6 +647,7 @@ impl Chess4pApp {
                 self.selected,
                 &targets,
                 last_move,
+                self.piece_textures.as_ref(),
                 self.font_ok,
             );
 

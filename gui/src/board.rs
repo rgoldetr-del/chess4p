@@ -1,13 +1,15 @@
 //! board.rs — отрисовка доски 14×14 для 4-игрочных шахмат и обработка кликов.
 
+use std::collections::HashMap;
+use std::path::Path;
+
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
 use chess4p_game::{
-    is_promoted, piece_color, piece_type, sq_index,
-    PieceType, GameState,
+    is_promoted, piece_color, piece_type, sq_index, Color, PieceType, GameState,
 };
 
-pub const CELL: f32 = 38.0;
+pub const CELL: f32 = 50.0;
 pub const BOARD_PX: f32 = CELL * 14.0;
 
 // Цвета игроков (как в bot/config.py COLOR_ORDER: red, blue, yellow, green)
@@ -22,8 +24,104 @@ pub const PLAYER_NAMES: [&str; 4] = ["Красный", "Синий", "Жёлты
 
 const LIGHT: Color32 = Color32::from_rgb(235, 236, 208);
 const DARK: Color32 = Color32::from_rgb(115, 149, 82);
+const VOID: Color32 = Color32::from_rgb(38, 40, 42);
 
-/// Unicode-глиф фигуры (нужен шрифт с шахматными символами, напр. Segoe UI Symbol)
+/// Пустые 3×3 углы доски (в них ничего не может стоять)
+pub fn is_void(x: usize, y: usize) -> bool {
+    (x <= 3 || x >= 12) && (y <= 3 || y >= 12)
+}
+
+// ============================================================
+// Спрайты фигур (PNG из assets/pieces)
+// ============================================================
+
+pub struct PieceTextures {
+    map: HashMap<String, egui::TextureHandle>,
+}
+
+fn color_dir_name(c: Color) -> &'static str {
+    match c {
+        Color::Red => "red",
+        Color::Blue => "blue",
+        Color::Yellow => "yellow",
+        Color::Green => "green",
+    }
+}
+
+fn piece_file_name(pt: PieceType) -> &'static str {
+    match pt {
+        PieceType::Pawn => "pawn",
+        PieceType::Knight => "knight",
+        PieceType::Bishop => "bishop",
+        PieceType::Rook => "rook",
+        PieceType::Queen | PieceType::King => "",
+    }
+}
+
+fn piece_file_name_promoted() -> &'static str {
+    "queen"
+}
+
+impl PieceTextures {
+    /// Загружает {color}-{piece}.png из каталога. None — каталог не найден,
+    /// тогда используется fallback-отрисовка буквами.
+    pub fn load(ctx: &egui::Context, dir: &Path) -> Option<Self> {
+        let mut map = HashMap::new();
+        let mut loaded = 0;
+
+        for ci in 0..4 {
+            let color = Color::ALL[ci];
+            let cname = color_dir_name(color);
+            for pname in ["pawn", "knight", "bishop", "rook", "queen", "king"] {
+                let path = dir.join(format!("{cname}-{pname}.png"));
+                if !path.exists() {
+                    continue;
+                }
+                let bytes = match std::fs::read(&path) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let img = image::load_from_memory(&bytes).ok()?;
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                    size,
+                    rgba.as_raw(),
+                );
+                let tex = ctx.load_texture(
+                    format!("piece-{cname}-{pname}"),
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                );
+                map.insert(format!("{cname}-{pname}"), tex);
+                loaded += 1;
+            }
+        }
+
+        if loaded == 0 {
+            return None;
+        }
+        Some(Self { map })
+    }
+
+    fn get(&self, c: Color, pt: PieceType, promoted: bool) -> Option<&egui::TextureHandle> {
+        let cname = color_dir_name(c);
+        let pname = if promoted {
+            piece_file_name_promoted()
+        } else {
+            match piece_file_name(pt) {
+                "" => match pt {
+                    PieceType::Queen => "queen",
+                    _ => "king",
+                },
+                s => s,
+            }
+        };
+        self.map.get(&format!("{cname}-{pname}"))
+    }
+}
+
+/// Fallback-глиф (если спрайты не найдены)
 fn piece_glyph(pt: PieceType, promoted: bool) -> &'static str {
     if promoted {
         return "♕";
@@ -52,19 +150,6 @@ fn piece_letter(pt: PieceType, promoted: bool) -> &'static str {
     }
 }
 
-/// Квадрант игрока для подсветки границ:
-/// Red — низ-право, Blue — низ-лево, Yellow — верх-лево, Green — верх-право
-fn quadrant_color(x: usize, y: usize) -> Color32 {
-    let top = y > 7;
-    let left = x <= 7;
-    match (top, left) {
-        (false, false) => PLAYER_COLORS[0], // red
-        (false, true) => PLAYER_COLORS[1],  // blue
-        (true, true) => PLAYER_COLORS[2],   // yellow
-        (true, false) => PLAYER_COLORS[3],  // green
-    }
-}
-
 pub struct BoardResponse {
     pub clicked: Option<(usize, usize)>,
 }
@@ -76,15 +161,22 @@ pub fn draw_board(
     selected: Option<(usize, usize)>,
     legal_targets: &[(usize, usize)],
     last_move: Option<((usize, usize), (usize, usize))>,
+    textures: Option<&PieceTextures>,
     font_ok: bool,
 ) -> BoardResponse {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(BOARD_PX), Sense::click());
     let painter = ui.painter();
     let origin = rect.min;
 
-    // Фон и клетки
+    // Фон пустых углов
+    painter.rect_filled(rect, 2.0, VOID);
+
+    // Клетки — бело-зелёная шахматная раскраска, углы пустые, без обводок
     for y in 1..=14usize {
         for x in 1..=14usize {
+            if is_void(x, y) {
+                continue;
+            }
             let p0 = origin + Vec2::new((x - 1) as f32 * CELL, (14 - y) as f32 * CELL);
             let r = Rect::from_min_size(p0, Vec2::splat(CELL));
             let checker = if (x + y) % 2 == 1 { DARK } else { LIGHT };
@@ -92,29 +184,12 @@ pub fn draw_board(
         }
     }
 
-    // Цветные границы квадрантов
-    for y in 1..=14usize {
-        for x in 1..=14usize {
-            // верхняя клетка квадрантного ряда/столбца — тонкая рамка цвета игрока
-            let p0 = origin + Vec2::new((x - 1) as f32 * CELL, (14 - y) as f32 * CELL);
-            let r = Rect::from_min_size(p0, Vec2::splat(CELL));
-            let qc = quadrant_color(x, y);
-            let mut stroke = Stroke::NONE;
-            if x == 1 || x == 14 || y == 1 || y == 14 {
-                stroke = Stroke::new(3.0_f32, qc);
-            } else if (x == 7 && y == 7) || (x == 8 && y == 7) || (x == 7 && y == 8) || (x == 8 && y == 8) {
-                stroke = Stroke::new(2.0_f32, qc);
-            }
-            if stroke.width > 0.0 {
-                painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Inside);
-            }
-        }
-    }
-
     // Подсветка последнего хода
     if let Some((from, to)) = last_move {
         for sq in [from, to] {
-            highlight_cell(painter, origin, sq, Color32::from_rgba_unmultiplied(255, 220, 60, 110));
+            if !is_void(sq.0, sq.1) {
+                highlight_cell(painter, origin, sq, Color32::from_rgba_unmultiplied(255, 220, 60, 110));
+            }
         }
     }
 
@@ -125,24 +200,38 @@ pub fn draw_board(
 
     // Подсветка легальных ходов
     for &(tx, ty) in legal_targets {
+        if is_void(tx, ty) {
+            continue;
+        }
         let p0 = origin + Vec2::new((tx - 1) as f32 * CELL, (14 - ty) as f32 * CELL);
         let center = p0 + Vec2::splat(CELL) * 0.5;
         let target_idx = sq_index(tx, ty);
-        let occupied = state.board[target_idx] != chess4p_game::board::EMPTY;
+        let occupied = state.board[target_idx] != chess4p_game::EMPTY;
         if occupied {
             // взятие — кольцо
-            painter.circle_stroke(center, CELL * 0.46, Stroke::new(4.0_f32, Color32::from_rgba_unmultiplied(40, 200, 90, 200)));
+            painter.circle_stroke(
+                center,
+                CELL * 0.46,
+                Stroke::new(4.0_f32, Color32::from_rgba_unmultiplied(40, 200, 90, 200)),
+            );
         } else {
-            painter.circle_filled(center, CELL * 0.16, Color32::from_rgba_unmultiplied(40, 200, 90, 160));
+            painter.circle_filled(
+                center,
+                CELL * 0.16,
+                Color32::from_rgba_unmultiplied(40, 200, 90, 160),
+            );
         }
     }
 
     // Фигуры
     for y in 1..=14usize {
         for x in 1..=14usize {
+            if is_void(x, y) {
+                continue;
+            }
             let idx = sq_index(x, y);
             let val = state.board[idx];
-            if val == chess4p_game::board::EMPTY {
+            if val == chess4p_game::EMPTY {
                 continue;
             }
             let Some(color) = piece_color(val) else { continue };
@@ -150,16 +239,35 @@ pub fn draw_board(
             let promoted = is_promoted(val);
 
             let p0 = origin + Vec2::new((x - 1) as f32 * CELL, (14 - y) as f32 * CELL);
-            let center = p0 + Vec2::splat(CELL * 0.5);
+            let cell_rect = Rect::from_min_size(p0, Vec2::splat(CELL));
 
             // Мёртвые/сдавшиеся — полупрозрачные
             let alpha = if state.dead_colors[color.index()] || state.resigned[color.index()] {
-                90
+                100u8
             } else {
-                255
+                255u8
             };
 
-            let text = if font_ok {
+            if let Some(texs) = textures {
+                if let Some(tex) = texs.get(color, pt, promoted) {
+                    let pad = CELL * 0.06;
+                    let img_rect = Rect::from_min_size(
+                        cell_rect.min + Vec2::splat(pad),
+                        Vec2::splat(CELL - pad * 2.0),
+                    );
+                    painter.image(
+                        tex.id(),
+                        img_rect,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                        Color32::from_rgba_unmultiplied(255, 255, 255, alpha),
+                    );
+                    continue;
+                }
+            }
+
+            // Fallback: буква цветом игрока
+            let center = cell_rect.center();
+            let glyph = if font_ok {
                 piece_glyph(pt, promoted)
             } else {
                 piece_letter(pt, promoted)
@@ -168,43 +276,54 @@ pub fn draw_board(
             painter.text(
                 center,
                 egui::Align2::CENTER_CENTER,
-                text,
+                glyph,
                 egui::FontId::proportional(font_size),
-                Color32::from_rgba_unmultiplied(PLAYER_COLORS[color.index()].r(), PLAYER_COLORS[color.index()].g(), PLAYER_COLORS[color.index()].b(), alpha),
+                Color32::from_rgba_unmultiplied(
+                    PLAYER_COLORS[color.index()].r(),
+                    PLAYER_COLORS[color.index()].g(),
+                    PLAYER_COLORS[color.index()].b(),
+                    alpha,
+                ),
             );
         }
     }
 
-    // Координатная сетка-подписи
+    // Координаты
     for x in 1..=14usize {
-        let p = origin + Vec2::new((x - 1) as f32 * CELL + CELL * 0.5, BOARD_PX + 9.0);
+        let p = origin + Vec2::new((x - 1) as f32 * CELL + CELL * 0.5, BOARD_PX + 10.0);
         painter.text(
             p,
             egui::Align2::CENTER_CENTER,
             &((b'a' + (x as u8 - 1)) as char).to_string(),
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(12.0),
             Color32::GRAY,
         );
     }
     for y in 1..=14usize {
-        let p = origin + Vec2::new(-9.0, (14 - y) as f32 * CELL + CELL * 0.5);
+        let p = origin + Vec2::new(-11.0, (14 - y) as f32 * CELL + CELL * 0.5);
         painter.text(
             p,
             egui::Align2::CENTER_CENTER,
             &y.to_string(),
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(12.0),
             Color32::GRAY,
         );
     }
 
-    // Обработка клика
-    let clicked = response.interact_pointer_pos().map(|pos: Pos2| {
+    // Обработка клика (клики по пустым углам игнорируются)
+    let clicked = response.interact_pointer_pos().and_then(|pos: Pos2| {
         let dx = (pos.x - origin.x) / CELL;
         let dy = (pos.y - origin.y) / CELL;
-        let x = (dx.floor() as i64 + 1).clamp(1, 14) as usize;
-        let y = (14.0 - dy).floor() as i64 + 1;
-        let y = y.clamp(1, 14) as usize;
-        (x, y)
+        if !(0.0..14.0).contains(&dx) || !(0.0..14.0).contains(&dy) {
+            return None;
+        }
+        let x = dx.floor() as usize + 1;
+        let y = (14.0 - dy).floor() as usize + 1;
+        let y = y.clamp(1, 14);
+        if is_void(x, y) {
+            return None;
+        }
+        Some((x, y))
     });
 
     BoardResponse { clicked }

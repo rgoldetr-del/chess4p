@@ -12,7 +12,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Chess4P")
-            .with_inner_size([1360.0, 900.0])
+            .with_inner_size([1480.0, 980.0])
             .with_min_inner_size([1100.0, 700.0]),
         ..Default::default()
     };
