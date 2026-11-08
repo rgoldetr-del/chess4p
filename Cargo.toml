@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "game",
+    "pyo3-bindings",
+    "godot-extension",
+]
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
