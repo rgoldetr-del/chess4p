@@ -9,8 +9,9 @@ use chess4p_game::{
     is_promoted, piece_color, piece_type, sq_index, Color, PieceType, GameState,
 };
 
-pub const CELL: f32 = 50.0;
-pub const BOARD_PX: f32 = CELL * 14.0;
+pub const DEFAULT_CELL: f32 = 50.0;
+pub const MIN_CELL: f32 = 24.0;
+pub const MAX_CELL: f32 = 96.0;
 
 // Цвета игроков (как в bot/config.py COLOR_ORDER: red, blue, yellow, green)
 pub const PLAYER_COLORS: [Color32; 4] = [
@@ -24,8 +25,6 @@ pub const PLAYER_NAMES: [&str; 4] = ["Красный", "Синий", "Жёлты
 
 const LIGHT: Color32 = Color32::from_rgb(235, 236, 208);
 const DARK: Color32 = Color32::from_rgb(115, 149, 82);
-const VOID: Color32 = Color32::from_rgb(38, 40, 42);
-
 /// Пустые 3×3 углы доски (в них ничего не может стоять)
 pub fn is_void(x: usize, y: usize) -> bool {
     (x <= 3 || x >= 12) && (y <= 3 || y >= 12)
@@ -152,11 +151,15 @@ fn piece_letter(pt: PieceType, promoted: bool) -> &'static str {
 
 pub struct BoardResponse {
     pub clicked: Option<(usize, usize)>,
+    pub hovered: bool,
 }
 
 /// Отрисовка доски. y=1 — низ (красные), y=14 — верх (жёлтые).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_board(
     ui: &mut Ui,
+    cell: f32,
+    void_color: Color32,
     state: &GameState,
     selected: Option<(usize, usize)>,
     legal_targets: &[(usize, usize)],
@@ -164,12 +167,13 @@ pub fn draw_board(
     textures: Option<&PieceTextures>,
     font_ok: bool,
 ) -> BoardResponse {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(BOARD_PX), Sense::click());
+    let board_px = cell * 14.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(board_px), Sense::click());
     let painter = ui.painter();
     let origin = rect.min;
 
     // Фон пустых углов
-    painter.rect_filled(rect, 2.0, VOID);
+    painter.rect_filled(rect, 2.0, void_color);
 
     // Клетки — бело-зелёная шахматная раскраска, углы пустые, без обводок
     for y in 1..=14usize {
@@ -177,8 +181,8 @@ pub fn draw_board(
             if is_void(x, y) {
                 continue;
             }
-            let p0 = origin + Vec2::new((x - 1) as f32 * CELL, (14 - y) as f32 * CELL);
-            let r = Rect::from_min_size(p0, Vec2::splat(CELL));
+            let p0 = origin + Vec2::new((x - 1) as f32 * cell, (14 - y) as f32 * cell);
+            let r = Rect::from_min_size(p0, Vec2::splat(cell));
             let checker = if (x + y) % 2 == 1 { DARK } else { LIGHT };
             painter.rect_filled(r, 0.0, checker);
         }
@@ -188,14 +192,14 @@ pub fn draw_board(
     if let Some((from, to)) = last_move {
         for sq in [from, to] {
             if !is_void(sq.0, sq.1) {
-                highlight_cell(painter, origin, sq, Color32::from_rgba_unmultiplied(255, 220, 60, 110));
+                highlight_cell(painter, origin, cell, sq, Color32::from_rgba_unmultiplied(255, 220, 60, 110));
             }
         }
     }
 
     // Подсветка выбранной фигуры
     if let Some(sel) = selected {
-        highlight_cell(painter, origin, sel, Color32::from_rgba_unmultiplied(90, 170, 255, 130));
+        highlight_cell(painter, origin, cell, sel, Color32::from_rgba_unmultiplied(90, 170, 255, 130));
     }
 
     // Подсветка легальных ходов
@@ -203,21 +207,21 @@ pub fn draw_board(
         if is_void(tx, ty) {
             continue;
         }
-        let p0 = origin + Vec2::new((tx - 1) as f32 * CELL, (14 - ty) as f32 * CELL);
-        let center = p0 + Vec2::splat(CELL) * 0.5;
+        let p0 = origin + Vec2::new((tx - 1) as f32 * cell, (14 - ty) as f32 * cell);
+        let center = p0 + Vec2::splat(cell) * 0.5;
         let target_idx = sq_index(tx, ty);
         let occupied = state.board[target_idx] != chess4p_game::EMPTY;
         if occupied {
             // взятие — кольцо
             painter.circle_stroke(
                 center,
-                CELL * 0.46,
+                cell * 0.46,
                 Stroke::new(4.0_f32, Color32::from_rgba_unmultiplied(40, 200, 90, 200)),
             );
         } else {
             painter.circle_filled(
                 center,
-                CELL * 0.16,
+                cell * 0.16,
                 Color32::from_rgba_unmultiplied(40, 200, 90, 160),
             );
         }
@@ -238,8 +242,8 @@ pub fn draw_board(
             let Some(pt) = piece_type(val) else { continue };
             let promoted = is_promoted(val);
 
-            let p0 = origin + Vec2::new((x - 1) as f32 * CELL, (14 - y) as f32 * CELL);
-            let cell_rect = Rect::from_min_size(p0, Vec2::splat(CELL));
+            let p0 = origin + Vec2::new((x - 1) as f32 * cell, (14 - y) as f32 * cell);
+            let cell_rect = Rect::from_min_size(p0, Vec2::splat(cell));
 
             // Мёртвые/сдавшиеся — полупрозрачные
             let alpha = if state.dead_colors[color.index()] || state.resigned[color.index()] {
@@ -250,10 +254,10 @@ pub fn draw_board(
 
             if let Some(texs) = textures {
                 if let Some(tex) = texs.get(color, pt, promoted) {
-                    let pad = CELL * 0.06;
+                    let pad = cell * 0.06;
                     let img_rect = Rect::from_min_size(
                         cell_rect.min + Vec2::splat(pad),
-                        Vec2::splat(CELL - pad * 2.0),
+                        Vec2::splat(cell - pad * 2.0),
                     );
                     painter.image(
                         tex.id(),
@@ -272,7 +276,7 @@ pub fn draw_board(
             } else {
                 piece_letter(pt, promoted)
             };
-            let font_size = if font_ok { CELL * 0.85 } else { CELL * 0.55 };
+            let font_size = if font_ok { cell * 0.85 } else { cell * 0.55 };
             painter.text(
                 center,
                 egui::Align2::CENTER_CENTER,
@@ -290,7 +294,7 @@ pub fn draw_board(
 
     // Координаты
     for x in 1..=14usize {
-        let p = origin + Vec2::new((x - 1) as f32 * CELL + CELL * 0.5, BOARD_PX + 10.0);
+        let p = origin + Vec2::new((x - 1) as f32 * cell + cell * 0.5, board_px + 10.0);
         painter.text(
             p,
             egui::Align2::CENTER_CENTER,
@@ -300,7 +304,7 @@ pub fn draw_board(
         );
     }
     for y in 1..=14usize {
-        let p = origin + Vec2::new(-11.0, (14 - y) as f32 * CELL + CELL * 0.5);
+        let p = origin + Vec2::new(-11.0, (14 - y) as f32 * cell + cell * 0.5);
         painter.text(
             p,
             egui::Align2::CENTER_CENTER,
@@ -312,8 +316,8 @@ pub fn draw_board(
 
     // Обработка клика (клики по пустым углам игнорируются)
     let clicked = response.interact_pointer_pos().and_then(|pos: Pos2| {
-        let dx = (pos.x - origin.x) / CELL;
-        let dy = (pos.y - origin.y) / CELL;
+        let dx = (pos.x - origin.x) / cell;
+        let dy = (pos.y - origin.y) / cell;
         if !(0.0..14.0).contains(&dx) || !(0.0..14.0).contains(&dy) {
             return None;
         }
@@ -326,11 +330,20 @@ pub fn draw_board(
         Some((x, y))
     });
 
-    BoardResponse { clicked }
+    BoardResponse {
+        clicked,
+        hovered: response.hovered(),
+    }
 }
 
-fn highlight_cell(painter: &egui::Painter, origin: Pos2, (x, y): (usize, usize), color: Color32) {
-    let p0 = origin + Vec2::new((x - 1) as f32 * CELL, (14 - y) as f32 * CELL);
-    let r = Rect::from_min_size(p0, Vec2::splat(CELL));
+fn highlight_cell(
+    painter: &egui::Painter,
+    origin: Pos2,
+    cell: f32,
+    (x, y): (usize, usize),
+    color: Color32,
+) {
+    let p0 = origin + Vec2::new((x - 1) as f32 * cell, (14 - y) as f32 * cell);
+    let r = Rect::from_min_size(p0, Vec2::splat(cell));
     painter.rect_filled(r, 0.0, color);
 }

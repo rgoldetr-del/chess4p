@@ -7,6 +7,7 @@ mod app;
 mod board;
 mod engine;
 mod scripts;
+mod sound;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

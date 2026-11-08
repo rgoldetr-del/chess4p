@@ -10,6 +10,7 @@ use chess4p_game::{Color, GameState, Move};
 use crate::board::{self, BoardResponse, PLAYER_COLORS, PLAYER_NAMES};
 use crate::engine::{Engine, EngineSearch};
 use crate::scripts::{ScriptRunner, SCRIPTS};
+use crate::sound::{SoundEvent, SoundPlayer};
 
 // ============================================================
 // Настройки (персистятся в gui_settings.json)
@@ -20,6 +21,8 @@ struct Settings {
     model_path: String,
     python_path: String,
     bot_dir: String,
+    #[serde(default)]
+    board_zoom: f32,
 }
 
 impl Default for Settings {
@@ -30,6 +33,7 @@ impl Default for Settings {
             bot_dir: std::env::current_dir()
                 .map(|d| d.join("bot").to_string_lossy().to_string())
                 .unwrap_or_else(|_| "bot".to_string()),
+            board_zoom: 1.0,
         }
     }
 }
@@ -91,6 +95,9 @@ pub struct Chess4pApp {
     runner: ScriptRunner,
     font_ok: bool,
     piece_textures: Option<board::PieceTextures>,
+    sounds: SoundPlayer,
+    board_zoom: f32,
+    game_over_played: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -124,6 +131,8 @@ impl Chess4pApp {
         }
         app_log(&format!("model_path = {:?}", settings.model_path));
 
+        let board_zoom = { let z = settings.board_zoom; if z > 0.0 { z } else { 1.0 } };
+
         // Спрайты фигур: assets/pieces рядом с exe или в текущей папке
         let piece_textures = {
             let mut dir = None;
@@ -156,6 +165,21 @@ impl Chess4pApp {
             runner: ScriptRunner::default(),
             font_ok,
             piece_textures,
+            sounds: SoundPlayer::new(&{
+                // assets/sounds рядом с exe или в текущей папке
+                let mut dir = std::path::PathBuf::from("assets/sounds");
+                if !dir.exists() {
+                    if let Ok(exe) = std::env::current_exe() {
+                        let d = exe.parent().unwrap().join("assets/sounds");
+                        if d.exists() {
+                            dir = d;
+                        }
+                    }
+                }
+                dir
+            }),
+            board_zoom,
+            game_over_played: false,
         };
 
         // Диагностический режим: CHESS4P_GUI_AUTOBOT=1 — все 4 места боты
@@ -272,7 +296,8 @@ impl Chess4pApp {
                     self.status = "🤖 у бота нет ходов".into();
                     self.log_line("бот: нет ходов (skip)");
                 } else {
-                    let ok = self.state.make_move_unchecked(mv.from, mv.to, true, None);
+                    // make_move(false): без строгой проверки, но С записью истории
+                    let ok = self.state.make_move(mv.from, mv.to, false);
                     if ok {
                         self.invalidate();
                         self.status = format!(
@@ -284,7 +309,13 @@ impl Chess4pApp {
                             result.root_value,
                             result.elapsed,
                         );
-                        self.log_line(&self.status);
+                        self.log_line(&format!(
+                            "{} | ходов в истории: {}",
+                            self.status,
+                            self.state.move_history.len()
+                        ));
+                        self.sounds.play(sound_for_move(&mv));
+                        self.on_move_finished();
                     }
                 }
             }
@@ -315,11 +346,14 @@ impl Chess4pApp {
             };
             if let Some(mv) = mv_opt {
                 let ok = self.state.make_move(sel, sq, true);
-                let _ = mv;
                 if ok {
                     self.invalidate();
                     self.status = format!("Ход {}: {} → {}", PLAYER_NAMES[turn], coord_str(sel), coord_str(sq));
+                    self.sounds.play(sound_for_move(&mv));
+                    self.on_move_finished();
                     return;
+                } else {
+                    self.sounds.play(SoundEvent::Illegal);
                 }
             }
             // Перевыбор своей фигуры или сброс
@@ -337,7 +371,16 @@ impl Chess4pApp {
             if val != chess4p_game::EMPTY && chess4p_game::piece_color(val) == Some(self.state.turn) {
                 self.selected = Some(sq);
                 self.legal_cache = None;
+                self.sounds.play(SoundEvent::Click);
             }
+        }
+    }
+
+    /// После любого применённого хода: разовый звук окончания партии.
+    fn on_move_finished(&mut self) {
+        if self.state.is_game_over() && !self.game_over_played {
+            self.game_over_played = true;
+            self.sounds.play(SoundEvent::GameEnd);
         }
     }
 
@@ -348,6 +391,7 @@ impl Chess4pApp {
         self.review_idx = None;
         self.pending_for = None;
         self.last_result = None;
+        self.game_over_played = false;
         self.status = "Новая партия".into();
     }
 
@@ -367,6 +411,7 @@ impl Chess4pApp {
                             self.invalidate();
                             self.review_idx = None;
                             self.pending_for = None;
+                            self.game_over_played = false;
                             self.status = format!("Загружено ходов: {}", self.state.move_history.len());
                         }
                         Err(e) => self.error = Some(format!("Ошибка PGN: {e}")),
@@ -457,6 +502,7 @@ impl Chess4pApp {
                         self.invalidate();
                         self.review_idx = None;
                         self.pending_for = None;
+                        self.game_over_played = false;
                         self.status = if failed == 0 {
                             format!("Загружено ходов: {}", sg.moves.len())
                         } else {
@@ -468,6 +514,18 @@ impl Chess4pApp {
                 Err(e) => self.error = Some(format!("Не удалось прочитать файл: {e}")),
             }
         }
+    }
+}
+
+fn sound_for_move(m: &Move) -> SoundEvent {
+    if m.castle > 0 {
+        SoundEvent::Castle
+    } else if m.promotion.is_some() {
+        SoundEvent::Promote
+    } else if m.captured.is_some() {
+        SoundEvent::Capture
+    } else {
+        SoundEvent::Move
     }
 }
 
@@ -641,8 +699,32 @@ impl Chess4pApp {
                 }
             }
 
+            let cell = (board::DEFAULT_CELL * self.board_zoom)
+                .clamp(board::MIN_CELL, board::MAX_CELL);
+            let void_color = ui.style().visuals.panel_fill;
+
+            // Зум: кнопки + колесо мыши над доской
+            ui.horizontal(|ui| {
+                ui.label("Доска:");
+                if ui.small_button("➖").clicked() {
+                    self.board_zoom = ((self.board_zoom - 0.1).max(0.5) * 10.0).round() / 10.0;
+                    self.save_settings();
+                }
+                if ui.small_button("➕").clicked() {
+                    self.board_zoom = ((self.board_zoom + 0.1).min(2.0) * 10.0).round() / 10.0;
+                    self.save_settings();
+                }
+                if ui.small_button("стандарт").clicked() {
+                    self.board_zoom = 1.0;
+                    self.save_settings();
+                }
+                ui.label(format!("{:.0}%", self.board_zoom * 100.0));
+            });
+
             let resp: BoardResponse = board::draw_board(
                 ui,
+                cell,
+                void_color,
                 &display,
                 self.selected,
                 &targets,
@@ -650,6 +732,19 @@ impl Chess4pApp {
                 self.piece_textures.as_ref(),
                 self.font_ok,
             );
+
+            // Колесо мыши над доской тоже меняет зум
+            if resp.hovered {
+                let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                if scroll.abs() > 0.5 {
+                    let factor = 1.0 - scroll * 0.0007;
+                    let old = self.board_zoom;
+                    self.board_zoom = (self.board_zoom * factor).clamp(0.5, 2.0);
+                    if (self.board_zoom - old).abs() > 1e-4 {
+                        self.save_settings();
+                    }
+                }
+            }
 
             if let Some(sq) = resp.clicked {
                 if review_mode {
@@ -835,6 +930,7 @@ impl Chess4pApp {
         ScrollArea::vertical()
             .id_salt("history_scroll")
             .max_height(240.0)
+            .stick_to_bottom(true)
             .show(ui, |ui| {
                 let mut goto: Option<usize> = None;
                 for i in 0..n {
