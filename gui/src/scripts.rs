@@ -56,6 +56,9 @@ impl ScriptRunner {
         if new_console {
             cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE
         } else {
+            // python.exe — консольное приложение: без этого флага Windows
+            // выкидывает чёрное окно консоли, попадающее в скриншоты
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         }
 

@@ -1230,7 +1230,7 @@ impl Chess4pApp {
                                 desc: "",
                             };
                             self.runner.spawn(&def, &python, &bot_dir, &["--no-pause".to_string()], false, &mut fail);
-                            self.status = "Калибровка: снимок экрана сделан. Откроется окно с доской — 2 клика по углам, WASD/Q/E подгонка, Enter — сохранить. Лог — ниже.".into();
+                            self.status = "Калибровка: отсчёт 5 секунд в логе — уберите окна с доски! Затем кликните углы в открывшемся окне.".into();
                         }
                         if ui
                             .add_enabled(!busy_check, egui::Button::new("🔍 Проверить"))

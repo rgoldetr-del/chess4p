@@ -270,7 +270,12 @@ def calibrate(screenshot=None, save=True):
     """Калибровка: 2 клика (TL, BR) -> подгонка сетки -> сохранение."""
     if screenshot is None:
         if "--no-pause" in sys.argv:
+            import time
+            for i in (5, 4, 3, 2, 1):
+                print(f"📸 Снимок экрана через {i}... (уберите окна с доски)")
+                time.sleep(1)
             screenshot = capture_screen()
+            print("📸 Снимок сделан.")
         else:
             print("Разверните chess.com (4PC), доска в начальной позиции.")
             print("Сверните VS Code и прочее, чтобы не мешало. Нажмите Enter...")
