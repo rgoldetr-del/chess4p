@@ -89,6 +89,14 @@ MODES = {
         "human": [],
         "observer": False,
     },
+
+    # AUTO: бот сам определяет цвет снизу (в chess.com снизу играет
+    # пользователь) и играет за него.
+    "auto": {
+        "bot": [],
+        "human": [],
+        "observer": True,
+    },
 }
 
 COLOR_ORDER = ["red", "blue", "yellow", "green"]

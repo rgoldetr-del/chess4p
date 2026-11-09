@@ -536,6 +536,22 @@ def run_analysis_mode(
 # Live mode
 # ============================================================
 
+def detect_bottom_color(board):
+    """Цвет, чьи фигуры стоят в нижних рядах доски (y=1..2).
+
+    В chess.com доска рисуется так, что цвет пользователя всегда снизу.
+    """
+    counts = {}
+    for y in (1, 2):
+        for x in range(1, 15):
+            cell = board[y][x]
+            if cell is not None and not cell[3]:
+                counts[cell[0]] = counts.get(cell[0], 0) + 1
+    if not counts:
+        return None
+    return max(counts, key=counts.get)
+
+
 def run_live_mode(
     mode_id,
     model_path=MODEL_PATH,
@@ -599,6 +615,18 @@ def run_live_mode(
         dump_pgn(recorder)
     else:
         last_board = initial_resync(game, detector, tracker, timer)
+
+    if mode_id == "auto":
+        bottom = detect_bottom_color(last_board)
+        if bottom is None:
+            print("❌ AUTO: не смог определить цвет снизу. Проверьте калибровку.")
+            sys.exit(1)
+        print(
+            f"🎮 AUTO: снизу {COLOR_ORDER[bottom].upper()} — "
+            f"бот играет за него, остальные — люди"
+        )
+        bot_colors = {bottom}
+        human_colors = set(range(4)) - bot_colors
     move_count = 0
     ocr_counter = 0
     no_detection_failures = 0

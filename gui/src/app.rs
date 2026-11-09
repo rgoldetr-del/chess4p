@@ -1295,9 +1295,11 @@ impl Chess4pApp {
                                 "blue" => "синий",
                                 "yellow" => "жёлтый",
                                 "green" => "зелёный",
+                                "auto" => "авто (кто снизу)",
                                 _ => "все цвета",
                             })
                             .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.bot_mode, "auto".to_string(), "авто (кто снизу)");
                                 ui.selectable_value(&mut self.bot_mode, "ever".to_string(), "все цвета");
                                 ui.selectable_value(&mut self.bot_mode, "red".to_string(), "красный");
                                 ui.selectable_value(&mut self.bot_mode, "blue".to_string(), "синий");
