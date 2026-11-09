@@ -26,7 +26,7 @@ from calibration import (
     load_calibration,
 )
 
-from coordinates import is_valid_square
+from coordinates import is_valid_square, screen_color_to_engine
 
 
 PIECE_NAMES = ["pawn", "knight", "bishop", "rook", "queen", "king"]
