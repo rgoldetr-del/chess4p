@@ -258,7 +258,7 @@ impl Chess4pApp {
             board_zoom,
             game_over_played: false,
             marks: board::BoardMarks::default(),
-            bot_mode: "ever".to_string(),
+            bot_mode: "auto".to_string(),
             bot_sims: 800,
             bot_ponder: true,
             calib_cache: None,
