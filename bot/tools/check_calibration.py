@@ -170,6 +170,11 @@ def main():
     print("")
     print(f"✅ Debug-картинка сохранена: {out_path}")
 
+    cv2.imshow("Check calibration", img)
+    print("Окно открыто: любая клавиша — закрыть.")
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()

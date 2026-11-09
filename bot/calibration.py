@@ -8,6 +8,7 @@
 """
 
 import cv2
+import sys
 import numpy as np
 import json
 import os
@@ -268,10 +269,13 @@ def _draw_grid(vis, gx, gy, cell, hint):
 def calibrate(screenshot=None, save=True):
     """Калибровка: 2 клика (TL, BR) -> подгонка сетки -> сохранение."""
     if screenshot is None:
-        print("Разверните chess.com (4PC), доска в начальной позиции.")
-        print("Сверните VS Code и прочее, чтобы не мешало. Нажмите Enter...")
-        input()
-        screenshot = capture_screen()
+        if "--no-pause" in sys.argv:
+            screenshot = capture_screen()
+        else:
+            print("Разверните chess.com (4PC), доска в начальной позиции.")
+            print("Сверните VS Code и прочее, чтобы не мешало. Нажмите Enter...")
+            input()
+            screenshot = capture_screen()
 
     full = screenshot.copy()
     win = "Calibrate 4PC board"
@@ -440,3 +444,14 @@ def calibrate(screenshot=None, save=True):
 
 # Совместимость со старыми вызовами.
 calibrate_manual = calibrate
+
+if __name__ == "__main__":
+    import sys
+    # --no-pause: пропустить ожидание Enter (для запуска из GUI, где stdin пуст)
+    if "--no-pause" in sys.argv:
+        print("📸 Снимаю экран (не убирайте окно с доской)...")
+        data = calibrate(capture_screen())
+        if data is None:
+            print("Отменено.")
+    else:
+        calibrate()

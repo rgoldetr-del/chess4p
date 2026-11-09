@@ -1229,8 +1229,8 @@ impl Chess4pApp {
                                 title: "Калибровка",
                                 desc: "",
                             };
-                            self.runner.spawn(&def, &python, &bot_dir, &[], true, &mut fail);
-                            self.status = "Калибровка: следуйте инструкциям в открывшемся окне (2 клика по углам доски, WASD/Q/E подгонка, Enter — сохранить)".into();
+                            self.runner.spawn(&def, &python, &bot_dir, &["--no-pause".to_string()], false, &mut fail);
+                            self.status = "Калибровка: снимок экрана сделан. Откроется окно с доской — 2 клика по углам, WASD/Q/E подгонка, Enter — сохранить. Лог — ниже.".into();
                         }
                         if ui
                             .add_enabled(!busy_check, egui::Button::new("🔍 Проверить"))
@@ -1241,7 +1241,7 @@ impl Chess4pApp {
                                 title: "Проверка калибровки",
                                 desc: "",
                             };
-                            self.runner.spawn(&def, &python, &bot_dir, &[], true, &mut fail);
+                            self.runner.spawn(&def, &python, &bot_dir, &[], false, &mut fail);
                         }
                         if ui
                             .add_enabled(calib_exists && !busy_cal, egui::Button::new("🗑 Удалить"))
