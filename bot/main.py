@@ -56,6 +56,8 @@ from state_sync import (
 )
 
 from coordinates import (
+    set_orientation,
+    screen_color_to_engine,
     game_to_screen,
     idx_to_coords,
     coords_to_idx,
@@ -644,13 +646,31 @@ def run_analysis_mode(
 # Live mode
 # ============================================================
 
+def try_detect_orientation(detector):
+    """Определяет, какой абсолютный цвет снизу экрана, и настраивает
+    ориентацию бота. Возвращает True, если фигуры видны."""
+    from coordinates import set_orientation
+    set_orientation("red")  # сырой режим: доска как на экране
+    try:
+        raw = detector.detect_full_board(capture_screen())
+        bottom = detect_bottom_color(raw)
+        if bottom is None:
+            return False
+        set_orientation(COLOR_ORDER[bottom])
+        print(f"🧭 Ориентация: снизу {COLOR_ORDER[bottom].upper()}")
+        return True
+    except Exception as e:
+        print(f"⚠ ориентация не определена: {e}")
+        return False
+
+
 def detect_bottom_color(board):
     """Цвет, чьи фигуры стоят в нижних рядах доски (y=1..2).
 
     В chess.com доска рисуется так, что цвет пользователя всегда снизу.
     """
     counts = {}
-    for y in (1, 2):
+    for y in (13, 14):
         for x in range(1, 15):
             cell = board[y][x]
             if cell is not None and not cell[3]:
@@ -698,8 +718,16 @@ def run_live_mode(
             "(python human_input_watcher.py) — детект по диффу доски."
         )
 
+    # 🧭 Ориентация: chess.com рисует снизу цвет пользователя
+    oriented = try_detect_orientation(detector)
+
     bot_colors = set(mode["bot"])
     human_colors = set(mode["human"])
+    if oriented and mode_id != "auto":
+        bot_colors = {
+            COLOR_ORDER.index(screen_color_to_engine(c)) for c in mode["bot"]
+        }
+        human_colors = set(range(4)) - bot_colors
 
     tracker = KingTracker()
     recorder = GameRecorder()
@@ -710,6 +738,8 @@ def run_live_mode(
         while not os.path.exists(PLAY_FLAG):
             time.sleep(0.5)
             print(".", end="", flush=True)
+            if not oriented:
+                oriented = try_detect_orientation(detector)
         try:
             os.remove(PLAY_FLAG)
         except OSError:
@@ -726,16 +756,11 @@ def run_live_mode(
         last_board = initial_resync(game, detector, tracker, timer)
 
     if mode_id == "auto":
-        bottom = detect_bottom_color(last_board)
-        if bottom is None:
-            print("❌ AUTO: не смог определить цвет снизу. Проверьте калибровку.")
-            sys.exit(1)
-        print(
-            f"🎮 AUTO: снизу {COLOR_ORDER[bottom].upper()} — "
-            f"бот играет за него, остальные — люди"
-        )
-        bot_colors = {bottom}
-        human_colors = set(range(4)) - bot_colors
+        # Ориентация установлена: цвет движка "red" = цвет снизу экрана
+        # = цвет пользователя
+        bot_colors = {0}
+        human_colors = {1, 2, 3}
+        print("🎮 AUTO: бот играет за цвет снизу экрана (ваш цвет)")
 
     watcher.reset()
     last_board = watcher.board

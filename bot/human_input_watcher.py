@@ -246,6 +246,7 @@ class TimerDetector:
         return best
 
     def read_stable(self, polls=None, interval=None):
+        # ВНИМАНИЕ: возвращается цвет ДВИЖКА (remap внутри)
         """Стабильное чтение: одно и то же значение несколько раз подряд."""
         if polls is None:
             polls = int(TIMER_CFG.get("stable_polls", 3))
@@ -265,14 +266,18 @@ class TimerDetector:
                 ok += 1
 
                 if ok >= polls - 1:
-                    return cur
+                    from coordinates import screen_color_idx_to_engine
+                    return screen_color_idx_to_engine(cur)
             else:
                 ok = 0
                 last = cur
 
             time.sleep(interval)
 
-        return last if last is not None else None
+        if last is not None:
+            from coordinates import screen_color_idx_to_engine
+            return screen_color_idx_to_engine(last)
+        return None
 
     def wait_for_turn_change(
         self,
@@ -290,13 +295,21 @@ class TimerDetector:
         if poll is None:
             poll = float(TIMER_CFG.get("wait_poll", 0.15))
 
+        # current приходит в цветах движка -> переводим в абсолютный цвет
+        try:
+            from coordinates import engine_color_idx_to_screen
+            current = engine_color_idx_to_screen(int(current))
+        except Exception:
+            pass
+
         t0 = time.time()
 
         while time.time() - t0 < timeout:
             act = self.read_stable(polls=2, interval=0.10)
 
             if act is not None and act != current:
-                return act, time.time() - t0
+                from coordinates import screen_color_idx_to_engine
+                return screen_color_idx_to_engine(act), time.time() - t0
 
             time.sleep(poll)
 

@@ -226,7 +226,19 @@ def _safe_match(cell_img: np.ndarray, tmpl: np.ndarray) -> float:
         return -1.0
 
 
-def detect_piece_in_cell(
+def detect_piece_in_cell(cell_img, templates: PieceTemplates, cfg: dict = None):
+    """Обёртка: перекрашивает абсолютный цвет экрана в цвет движка
+    (при повёрнутой доске сидения смещаются)."""
+    result = _detect_piece_in_cell_raw(cell_img, templates, cfg)
+    if result is None:
+        return None
+    color, piece, promoted, dead = result
+    if color != "gray":
+        color = screen_color_to_engine(color)
+    return (color, piece, promoted, dead)
+
+
+def _detect_piece_in_cell_raw(
     cell_img,
     templates: PieceTemplates,
     cfg: dict = None,

@@ -21,7 +21,12 @@ from config import (
 )
 
 from screen_capture import capture_screen
-from coordinates import game_to_screen  # noqa: F401  (совместимость)
+from coordinates import (
+    game_to_screen,  # noqa: F401  (совместимость)
+    engine_pos_to_screen,
+    screen_pos_to_engine,
+    screen_color_to_engine,
+)
 
 GRID = int(BOARD_SIZE)
 _EDGE_CACHE = {}
@@ -149,7 +154,9 @@ def _grid_edges(cal: dict):
 
 
 def square_to_region(x: int, y: int, cal: dict):
-    """Возвращает (left, top, width, height) клетки в экранных координатах."""
+    """Возвращает (left, top, width, height) клетки в экранных координатах.
+    (x, y) — координаты ДВИЖКА; поворот под ориентацию доски."""
+    x, y = engine_pos_to_screen(x, y)
     x = max(1, min(GRID, int(x)))
     y = max(1, min(GRID, int(y)))
 
@@ -167,7 +174,8 @@ def square_to_region(x: int, y: int, cal: dict):
 
 
 def square_to_pixel(x: int, y: int, cal: dict):
-    """Центр клетки в экранных координатах."""
+    """Центр клетки в экранных координатах (x, y — координаты движка)."""
+    x, y = engine_pos_to_screen(x, y)
     x = max(1, min(GRID, int(x)))
     y = max(1, min(GRID, int(y)))
 
@@ -183,12 +191,13 @@ def pixel_to_square(px: int, py: int, cal: dict):
     """Экранный пиксель -> клетка доски."""
     xs, ys = _grid_edges(cal)
 
-    x = int(np.searchsorted(xs, int(px), side="right"))
-    y = int(np.searchsorted(ys, int(py), side="right"))
+    sx = int(np.searchsorted(xs, int(px), side="right"))
+    sy = int(np.searchsorted(ys, int(py), side="right"))
 
-    x = max(1, min(GRID, x))
-    y = max(1, min(GRID, y))
+    sx = max(1, min(GRID, sx))
+    sy = max(1, min(GRID, sy))
 
+    x, y = screen_pos_to_engine(sx, sy)
     return x, y
 
 

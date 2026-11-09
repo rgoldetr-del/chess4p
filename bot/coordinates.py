@@ -44,3 +44,58 @@ def is_valid_square(x: int, y: int) -> bool:
     in_y = y <= 3 or y >= 12
 
     return not (in_x and in_y)
+
+# ============================================================
+# Ориентация доски: chess.com рисует снизу ЦВЕТ ПОЛЬЗОВАТЕЛЯ.
+# Весь бот работает в координатах движка (красный снизу), поэтому при
+# повёрнутой доске применяется поворот сетки и перекраска цветов.
+# ============================================================
+ORIENTATION = "red"  # какой абсолютный цвет находится СНИЗУ экрана
+
+def set_orientation(bottom_color):
+    """bottom_color — абсолютный цвет ('red'/'blue'/'yellow'/'green'),
+    который сейчас находится у нижнего края экрана."""
+    global ORIENTATION
+    if bottom_color in ("red", "blue", "yellow", "green"):
+        ORIENTATION = bottom_color
+
+def get_orientation():
+    return ORIENTATION
+
+# Поворот координат: движок (x, y) -> экран (sx, sy)
+_ROT_E2S = {
+    "red":    lambda x, y: (x, y),
+    "yellow": lambda x, y: (15 - x, y),
+    "blue":   lambda x, y: (15 - y, 15 - x),
+    "green":  lambda x, y: (y, x),
+}
+# Инверсия: экран -> движок
+_ROT_S2E = {
+    "red":    lambda sx, sy: (sx, sy),
+    "yellow": lambda sx, sy: (15 - sx, sy),
+    "blue":   lambda sx, sy: (15 - sy, 15 - sx),
+    "green":  lambda sx, sy: (sy, sx),
+}
+
+def engine_pos_to_screen(x, y):
+    return _ROT_E2S[ORIENTATION](x, y)
+
+def screen_pos_to_engine(sx, sy):
+    return _ROT_S2E[ORIENTATION](sx, sy)
+
+# Перекраска: абсолютный цвет на экране -> цвет движка
+# (сидения: красный низ, синий лево, жёлтый верх, зелёный право)
+_COLOR_MAP_S2E = {
+    "red":    {"red": "red", "blue": "blue", "yellow": "yellow", "green": "green"},
+    "yellow": {"yellow": "red", "green": "blue", "red": "yellow", "blue": "green"},
+    "blue":   {"blue": "red", "yellow": "blue", "green": "yellow", "red": "green"},
+    "green":  {"green": "red", "red": "blue", "blue": "yellow", "yellow": "green"},
+}
+
+def screen_color_to_engine(name):
+    return _COLOR_MAP_S2E.get(ORIENTATION, {}).get(name, name)
+
+def engine_color_to_screen(name):
+    m = _COLOR_MAP_S2E.get(ORIENTATION, {})
+    inv = {v: k for k, v in m.items()}
+    return inv.get(name, name)

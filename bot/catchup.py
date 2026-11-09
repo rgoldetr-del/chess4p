@@ -208,6 +208,9 @@ def burst_detect_move(game, detector, turn, last_board, diff_fn,
                 return board, mv
         shot = capture_screen()
         hl = detect_move_highlight(shot, detector.cal)
+        if hl:
+            from coordinates import screen_color_idx_to_engine
+            hl = dict(hl, color=screen_color_idx_to_engine(hl["color"]))
         if hl and hl["color"] == turn:
             idx = match_highlight_to_legal(game, hl)
             if idx is not None:
