@@ -46,7 +46,10 @@ impl ScriptRunner {
         let mut cmd = Command::new(python);
         cmd.arg(script.path)
             .args(args)
-            .current_dir(bot_dir);
+            .current_dir(bot_dir)
+            // stdout в пайпе — cp1251; эмодзи в скриптах ломают print().
+            .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONUTF8", "1");
 
         // Интерактивным скриптам (input(), OpenCV-окна) нужна своя консоль:
         // вывод идёт в неё, а не в лог GUI.

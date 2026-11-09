@@ -103,12 +103,12 @@ pub struct Chess4pApp {
     bot_sims: u32,
     calib_cache: Option<u64>,
     calib_status: String,
+    bot_window_open: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Tab {
     Game,
-    Scripts,
     Settings,
 }
 
@@ -215,6 +215,7 @@ impl Chess4pApp {
             bot_sims: 400,
             calib_cache: None,
             calib_status: String::new(),
+            bot_window_open: true,
         };
 
         // Диагностический режим: CHESS4P_GUI_AUTOBOT=1 — все 4 места боты
@@ -698,7 +699,9 @@ impl eframe::App for Chess4pApp {
                 ui.heading("♞ Chess4P");
                 ui.separator();
                 ui.selectable_value(&mut self.tab, Tab::Game, "🎮 Игра");
-                ui.selectable_value(&mut self.tab, Tab::Scripts, "📜 Скрипты");
+                if ui.selectable_label(self.bot_window_open, "🤖 Бот").clicked() {
+                    self.bot_window_open = !self.bot_window_open;
+                }
                 ui.selectable_value(&mut self.tab, Tab::Settings, "⚙ Настройки");
             });
         });
@@ -711,13 +714,35 @@ impl eframe::App for Chess4pApp {
 
         match self.tab {
             Tab::Game => self.show_game(ctx),
-            Tab::Scripts => self.show_scripts(ctx),
             Tab::Settings => self.show_settings(ctx),
         }
 
         // Перерисовка пока бот думает или скрипт пишет лог
         if self.pending_for.is_some() || !self.runner.running.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+
+        // Плавающее окно бота: отдельный viewport, всегда поверх других окон
+        if self.bot_window_open {
+            ctx.show_viewport_immediate(
+                egui::ViewportId(egui::Id::new("bot_panel")),
+                egui::ViewportBuilder::default()
+                    .with_title("Chess4P — бот")
+                    .with_inner_size([420.0, 380.0])
+                    .with_always_on_top(),
+                |vp_ctx, _class| {
+                    egui::CentralPanel::default().show(vp_ctx, |ui| {
+                        self.bot_panel(ui);
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if ui.small_button("✖ Закрыть окно").clicked() {
+                                self.bot_window_open = false;
+                            }
+                            ui.checkbox(&mut self.runner.auto_scroll, "Автопрокрутка");
+                        });
+                    });
+                },
+            );
         }
     }
 
@@ -1083,12 +1108,10 @@ impl Chess4pApp {
     }
 
     // ========================================================
-    // Вкладка «Скрипты»
+    // Панель экранного бота (плавающее окно)
     // ========================================================
 
-    fn show_scripts(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Скрипты bot/");
+    fn bot_panel(&mut self, ui: &mut egui::Ui) {
             ui.label(
                 RichText::new(format!(
                     "Python: {}   |   Папка: {}",
@@ -1099,9 +1122,8 @@ impl Chess4pApp {
             );
             ui.add_space(6.0);
 
-            ScrollArea::vertical().show(ui, |ui| {
-                // ================================================
-                // Секция «Экранный бот»
+            // ================================================
+            // Секция «Экранный бот»
                 // ================================================
                 self.refresh_calibration_status();
                 let busy_cal = self.runner.running.iter().any(|r| r.title == "Калибровка");
@@ -1288,12 +1310,11 @@ impl Chess4pApp {
                     .stick_to_bottom(self.runner.auto_scroll)
                     .show(ui, |ui| {
                         let log = self.runner.log.lock().map(|l| l.clone()).unwrap_or_default();
-                        for (_, line) in log {
+                        let start = log.len().saturating_sub(300);
+                        for (_, line) in log.into_iter().skip(start) {
                             ui.monospace(line);
                         }
                     });
-            });
-        });
     }
 
     // ========================================================
