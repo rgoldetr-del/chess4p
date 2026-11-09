@@ -163,6 +163,51 @@ impl Chess4pApp {
 
         let board_zoom = { let z = settings.board_zoom; if z > 0.0 { z } else { 1.0 } };
 
+        // Поиск «правильного» python.exe: PATH может указывать на чужой питон
+        // (например, msys64), в котором нет наших пакетов.
+        if settings.python_path.is_empty()
+            || settings.python_path == "python"
+            || !std::path::Path::new(&settings.python_path).exists()
+        {
+            let mut found: Option<std::path::PathBuf> = None;
+            if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                let pydir = std::path::Path::new(&local).join("Python");
+                if let Ok(entries) = std::fs::read_dir(&pydir) {
+                    let mut vers: Vec<(String, std::path::PathBuf)> = entries
+                        .flatten()
+                        .filter(|e| {
+                            e.file_name().to_string_lossy().starts_with("pythoncore-")
+                                && e.path().join("python.exe").exists()
+                        })
+                        .map(|e| (e.file_name().to_string_lossy().to_string(), e.path()))
+                        .collect();
+                    vers.sort();
+                    vers.reverse(); // старшая версия первой
+                    found = vers.first().map(|(_, p)| p.join("python.exe"));
+                }
+            }
+            if found.is_none() {
+                // py.exe (launcher) как запасной вариант
+                if let Ok(out) = std::process::Command::new("where")
+                    .arg("py")
+                    .output()
+                {
+                    if out.status.success() {
+                        let line = String::from_utf8_lossy(&out.stdout);
+                        if let Some(p) = line.lines().next() {
+                            let p = p.trim();
+                            if !p.is_empty() {
+                                found = Some(std::path::PathBuf::from(p));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(p) = found {
+                settings.python_path = p.to_string_lossy().to_string();
+            }
+        }
+
         // Спрайты фигур: assets/pieces рядом с exe или в текущей папке
         let piece_textures = {
             let mut dir = None;
