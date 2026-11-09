@@ -10,6 +10,7 @@
 - можно переопределять sims/time через CLI.
 """
 
+import os
 import sys
 import time
 import argparse
