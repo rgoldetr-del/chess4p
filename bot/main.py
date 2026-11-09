@@ -292,7 +292,115 @@ def get_consensus_board(detector, num_shots=3):
 # Wait action
 # ============================================================
 
-def wait_action(timer, use_timer, current, detector, last_board, timeout=300.0):
+class BoardWatcher:
+    """Быстрый мониторинг доски.
+
+    - изменение клеток детектится по хешам (~20 мс вместо ~300 мс);
+    - распознаются только изменившиеся клетки (стабильные не мигают);
+    - есть детект конца анимации (кадры перестают меняться).
+    """
+
+    def __init__(self, detector):
+        self.detector = detector
+        self.board = None
+        self.hashes = None
+
+    def reset(self):
+        """Полная детекция заново (после resync/запуска)."""
+        self.board = self.detector.detect_full_board(capture_screen())
+        self.hashes = self.detector.cell_hashes(capture_screen())
+        return self.board
+
+    def sync_from(self, board):
+        """Доска получена извне (консенсус, burst) — обновить хеши."""
+        self.board = board
+        self.hashes = self.detector.cell_hashes(capture_screen())
+
+    def changed(self, threshold=12.0):
+        """Быстрая проверка изменений; обновляет self.hashes."""
+        shot = capture_screen()
+        hashes, changed = self.detector.changed_cells(
+            shot, self.hashes or {}, threshold
+        )
+        self.hashes = hashes
+        return changed
+
+    def update_smart(self, screenshot=None, threshold=12.0):
+        """Обновить доску, распознавая только изменившиеся клетки."""
+        if screenshot is None:
+            screenshot = capture_screen()
+        if self.board is None or self.hashes is None:
+            self.board = self.detector.detect_full_board(screenshot)
+            self.hashes = self.detector.cell_hashes(screenshot)
+            return self.board
+        board, hashes = self.detector.detect_full_board_smart(
+            screenshot, self.board, self.hashes, threshold
+        )
+        self.board = board
+        self.hashes = hashes
+        return board
+
+    def wait_stable(self, timeout=3.0):
+        """Ждёт конца анимации (2 кадра подряд без изменений) и
+        возвращает обновлённую доску."""
+        start = time.time()
+        stable = 0
+        while time.time() - start < timeout:
+            time.sleep(0.12)
+            if not self.changed():
+                stable += 1
+                if stable >= 2:
+                    break
+            else:
+                stable = 0
+        return self.update_smart()
+
+
+def wait_action(timer, use_timer, current, watcher, timeout=300.0):
+    """
+    Ждёт действия: смену таймера ИЛИ изменение доски (что раньше).
+
+    Изменение доски: >=2 клеток отличаются от старта ожидания, затем
+    анимация завершилась (2 кадра подряд без изменений).
+
+    Возвращает:
+    (acted: bool, active_color: int | None)
+    """
+    deadline = time.time() + timeout
+    baseline = dict(watcher.hashes or {})
+    triggered = False
+    stable = 0
+
+    while time.time() < deadline:
+        if use_timer and not triggered:
+            try:
+                act, _ = timer.wait_for_turn_change(current, timeout=0.2)
+                if act is not None:
+                    triggered = True
+            except Exception:
+                pass
+
+        time.sleep(0.2)
+        hashes, changed = watcher.detector.changed_cells(
+            capture_screen(), baseline
+        )
+
+        if not triggered and len(changed) >= 2:
+            triggered = True
+
+        if not triggered:
+            continue
+
+        if not changed:
+            stable += 1
+            if stable >= 2:
+                watcher.hashes = hashes
+                return True, None
+        else:
+            stable = 0
+            watcher.hashes = hashes
+
+    return False, None
     """
     Ждёт действия: смену таймера ИЛИ устойчивое изменение доски (что раньше).
     Раньше при откалиброванных таймерах мы ждали ТОЛЬКО таймер, и если детект
@@ -574,6 +682,7 @@ def run_live_mode(
         cal = calibrate()
 
     detector = BoardDetector(cal)
+    watcher = BoardWatcher(detector)
     engine = EngineWrapper(model_path)
 
     game = chess4p_ai.PyGameState()
@@ -627,6 +736,9 @@ def run_live_mode(
         )
         bot_colors = {bottom}
         human_colors = set(range(4)) - bot_colors
+
+    watcher.reset()
+    last_board = watcher.board
     move_count = 0
     ocr_counter = 0
     no_detection_failures = 0
@@ -644,6 +756,10 @@ def run_live_mode(
             while os.path.exists(PAUSE_FLAG):
                 time.sleep(0.5)
 
+            if watcher.board is None:
+                watcher.reset()
+            last_board = watcher.board
+
             # ---------- -1. Защита от паники Rust-движка (PanicException) ----------
             try:
                 # Пробуем сгенерировать ходы. Если состояние битое, движок упадет здесь.
@@ -657,7 +773,8 @@ def run_live_mode(
                     game = g2
                     engine.reset_root()
                     # Обновляем доску, чтобы избежать ложных срабатываний diff на следующем шаге
-                    last_board = detector.detect_full_board(capture_screen())
+                    watcher.reset()
+                    last_board = watcher.board
                     tracker.update(last_board)
                     continue
                 else:
@@ -732,9 +849,7 @@ def run_live_mode(
                 game.auto_play_dead_fast()
                 recorder.skip(turn=turn)
 
-                time.sleep(animation_sleep)
-
-                last_board = detector.detect_full_board(capture_screen())
+                last_board = watcher.wait_stable(timeout=2.0)
                 tracker.update(last_board)
 
                 continue
@@ -744,17 +859,11 @@ def run_live_mode(
             # ------------------------------------------------------------
             if game.is_turn_resigned():
                 acted, _active = wait_action(
-                    timer,
-                    use_timer,
-                    turn,
-                    detector,
-                    last_board,
+                    timer, use_timer, turn, watcher,
                     timeout=resigned_move_timeout,
                 )
 
-                time.sleep(animation_sleep)
-
-                curr = wait_for_stable_board(detector, timeout=3.0)
+                curr = watcher.wait_stable(timeout=3.0)
                 mv = detect_move_from_diff(game, last_board, curr, turn)
 
                 if mv:
@@ -801,6 +910,7 @@ def run_live_mode(
 
                         time.sleep(1.0)
                         last_board = get_consensus_board(detector)
+                        watcher.sync_from(last_board)
                         tracker.update(last_board)
                         continue
 
@@ -878,17 +988,11 @@ def run_live_mode(
                 )
 
                 acted, _active = wait_action(
-                    timer,
-                    use_timer,
-                    turn,
-                    detector,
-                    last_board,
+                    timer, use_timer, turn, watcher,
                     timeout=bot_move_timeout,
                 )
 
-                time.sleep(animation_sleep)
-
-                curr = wait_for_stable_board(detector, timeout=3.0)
+                curr = watcher.wait_stable(timeout=3.0)
 
                 def _confirmed(board):
                     cell = board[ty_s][tx_s]
@@ -919,9 +1023,10 @@ def run_live_mode(
 
                     # 3. Делаем клик новым ходом
                     execute_move((fx_s, fy_s), (tx_s, ty_s), cal, method="click")
-                    wait_action(timer, use_timer, turn, detector, last_board, timeout=bot_move_timeout)
+                    wait_action(timer, use_timer, turn, watcher, timeout=bot_move_timeout)
                     time.sleep(animation_sleep)
                     curr = get_consensus_board(detector) # Используем консенсус!
+                    watcher.sync_from(curr)
                     retries += 1
         
                 if not _confirmed(curr):
@@ -976,11 +1081,7 @@ def run_live_mode(
                     engine.start_ponder(game, simulations=simulations or 800)
 
                 acted, active_after = wait_action(
-                    timer,
-                    use_timer,
-                    turn,
-                    detector,
-                    last_board,
+                    timer, use_timer, turn, watcher,
                     timeout=human_move_timeout,
                 )
 
@@ -1004,6 +1105,7 @@ def run_live_mode(
                     game.make_move_fast_idx(coords_to_idx(*mv))
                     recorder.move(mv[:2], mv[2:], turn=turn)
                     dump_pgn(recorder)
+                    watcher.sync_from(curr)
                     last_board = curr
                     tracker.update(curr)
                 else:

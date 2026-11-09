@@ -469,6 +469,76 @@ class BoardDetector:
 
         return board
 
+    def cell_hashes(self, screenshot):
+        """Быстрый хеш клеток: средний цвет внутренности клетки.
+        ~10-20 мс на всю доску (полное распознавание ~200-400 мс)."""
+        hashes = {}
+        for x, y in self.valid_squares:
+            left, top, w, h = square_to_region(x, y, self.cal)
+            if w <= 0 or h <= 0:
+                continue
+            ix = max(1, int(w * 0.18))
+            iy = max(1, int(h * 0.18))
+            cell = screenshot[top + iy:top + h - iy, left + ix:left + w - ix]
+            if cell.size == 0:
+                continue
+            hashes[(x, y)] = cell.mean(axis=(0, 1))
+        return hashes
+
+    def changed_cells(self, screenshot, prev_hashes, threshold=12.0):
+        """Возвращает (hashes, список изменившихся (x, y)).
+        threshold — средняя абсолютная разница каналов (0..255)."""
+        hashes = self.cell_hashes(screenshot)
+        changed = []
+        for key, h in hashes.items():
+            ph = prev_hashes.get(key)
+            if ph is None or float(np.abs(h - ph).mean()) > threshold:
+                changed.append(key)
+        return hashes, changed
+
+    def detect_full_board_smart(self, screenshot, prev_board, prev_hashes, threshold=12.0):
+        """Доска с точечной детекцией: распознаются только ИЗМЕНИВШИЕСЯ
+        клетки, неизменные копируются из prev_board.
+
+        Стабильные клетки перестают мигать из-за шума детекции, а полная
+        детекция нужна только для 2-4 клеток вместо 196.
+        """
+        hashes, changed = self.changed_cells(screenshot, prev_hashes, threshold)
+        changed_set = set(changed)
+        board = [[None] * 15 for _ in range(15)]
+
+        for x, y in self.valid_squares:
+            if (
+                (x, y) not in changed_set
+                and prev_board is not None
+                and prev_board[y] is not None
+            ):
+                board[y][x] = prev_board[y][x]
+                continue
+
+            left, top, w, h = square_to_region(x, y, self.cal)
+            if w <= 0 or h <= 0:
+                continue
+
+            cell = screenshot[top:top + h, left:left + w]
+            if cell.size == 0:
+                continue
+
+            result = detect_piece_in_cell(cell, self.templates, DETECTION_CFG)
+            if result is None:
+                self._maybe_debug_cell(cell, x, y)
+                continue
+
+            color, piece, promoted, dead = result
+            board[y][x] = (
+                COLOR_TO_IDX.get(color, -1),
+                PIECE_NAMES.index(piece),
+                promoted,
+                dead,
+            )
+
+        return board, hashes
+
     def _maybe_debug_cell(self, cell_img, x, y, cooldown=10.0, max_files=300):
         """Клетка не пустая, но не распознана -> сохранить как дебаг."""
         try:
