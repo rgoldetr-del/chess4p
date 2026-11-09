@@ -529,6 +529,7 @@ def run_live_mode(
     simulations=None,
     max_time=None,
     catchup=False,
+    ponder=True,
 ):
     mode = MODES[mode_id]
 
@@ -913,6 +914,10 @@ def run_live_mode(
                 )
                 sys.stdout.flush()
 
+                # 🧠 Фоновый поиск текущей позиции, пока соперники думают
+                if ponder:
+                    engine.start_ponder(game, simulations=simulations or 800)
+
                 acted, active_after = wait_action(
                     timer,
                     use_timer,
@@ -922,13 +927,16 @@ def run_live_mode(
                     timeout=human_move_timeout,
                 )
 
+                engine.stop_ponder()
+
                 if not acted:
                     print("\n⚠ timeout ожидания хода")
                     continue
 
                 curr, mv = burst_detect_move(
                     game, detector, turn, last_board,
-                    detect_move_from_diff, max_wait=8.0)
+                    detect_move_from_diff, max_wait=8.0,
+                    consensus_fn=lambda: get_consensus_board(detector))
 
                 if mv:
                     print(
@@ -1019,6 +1027,12 @@ def main():
     )
 
     parser.add_argument(
+        "--no-ponder",
+        action="store_true",
+        help="Отключить фоновый поиск во время ходов соперников",
+    )
+
+    parser.add_argument(
         "--sims",
         type=int,
         default=None,
@@ -1060,6 +1074,7 @@ def main():
             simulations=args.sims,
             max_time=args.time,
             catchup=args.catchup,
+            ponder=not args.no_ponder,
         )
 
 

@@ -8,6 +8,7 @@
 """
 
 import os
+import threading
 import torch
 import numpy as np
 import chess4p_ai  # type: ignore[import-untyped]
@@ -135,6 +136,11 @@ class EngineWrapper:
 
         self.last_root = None
 
+        # Потокобезопасность + pondering (поиск в чужие ходы)
+        self._lock = threading.Lock()
+        self._ponder_stop = threading.Event()
+        self._ponder_thread = None
+
         self.warmup()
 
     # ============================================================
@@ -178,7 +184,12 @@ class EngineWrapper:
     # ============================================================
     # Main move search
     # ============================================================
-    def get_best_move(self, game, simulations=None, max_time=None):
+    def get_best_move(self, game, simulations=None, max_time=None, verbose=True):
+        """Потокобезопасный поиск лучшего хода."""
+        with self._lock:
+            return self._get_best_move_impl(game, simulations, max_time, verbose)
+
+    def _get_best_move_impl(self, game, simulations, max_time, verbose):
         sims = int(simulations or MCTS_SIMULATIONS)
         min_sims = int(MCTS_MIN_SIMS)
         if min_sims <= 0:
@@ -200,7 +211,23 @@ class EngineWrapper:
         }
         
         last_root = self.last_root if MCTS_REUSE_ROOT else None
-        
+
+        # Спуск дерева: если соперник только что сделал ход, который уже есть
+        # в дереве (после pondering) — переходим в соответствующее поддерево,
+        # чтобы не начинать поиск с нуля.
+        if last_root is not None:
+            try:
+                lmi = game.get_last_move_idx()
+                if lmi is not None:
+                    child = next(
+                        (c for c in last_root.children if c.move_idx == int(lmi)),
+                        None,
+                    )
+                    if child is not None:
+                        last_root = child
+            except Exception:
+                pass
+
         result = mcts_search(
             game,
             self.model,
@@ -216,7 +243,7 @@ class EngineWrapper:
         best_idx, _top_idx, _top_prob, _legal_packed, new_root, dbg = result
         self.last_root = new_root
         
-        if dbg:
+        if dbg and verbose:
             reused = dbg.get("root_reused", 0)
             print(
                 f"  MCTS: sims={dbg.get('simulations', 0)} "
@@ -234,6 +261,50 @@ class EngineWrapper:
 
     def reset_root(self):
         self.last_root = None
+
+    # ============================================================
+    # Pondering: фоновый поиск во время ходов соперников
+    # ============================================================
+    def start_ponder(self, game, simulations=800):
+        """Запускает фоновый поиск текущей позиции (небольшими срезами).
+
+        Дерево живёт в self.last_root: когда соперник сделает ход и
+        main-поток вызовет get_best_move, произойдёт спуск в поддерево его
+        хода — и ход будет готов почти мгновенно.
+        """
+        if self.device.type != 'cuda':
+            return  # на CPU фоновый поиск только мешает
+        if self._ponder_thread is not None:
+            return
+        self._ponder_stop.clear()
+
+        def _loop():
+            while not self._ponder_stop.is_set():
+                try:
+                    g = game.clone_state()
+                    self._get_best_move_impl(
+                        g,
+                        max(128, int(simulations) // 4),
+                        1.2,   # срез: чтобы main-поток не ждал дольше ~1.5 с
+                        False, # без спама в лог
+                    )
+                except Exception:
+                    return
+                self._ponder_stop.wait(0.05)
+
+        self._ponder_thread = threading.Thread(target=_loop, daemon=True)
+        self._ponder_thread.start()
+
+    def stop_ponder(self, timeout=2.0):
+        """Останавливает фоновый поиск и дожидается текущего среза."""
+        if self._ponder_thread is None:
+            return
+        self._ponder_stop.set()
+        try:
+            self._ponder_thread.join(timeout=timeout)
+        except Exception:
+            pass
+        self._ponder_thread = None
 
     # ============================================================
     # Eval only

@@ -101,6 +101,7 @@ pub struct Chess4pApp {
     marks: board::BoardMarks,
     bot_mode: String,
     bot_sims: u32,
+    bot_ponder: bool,
     calib_cache: Option<u64>,
     calib_status: String,
     bot_window_open: bool,
@@ -257,7 +258,8 @@ impl Chess4pApp {
             game_over_played: false,
             marks: board::BoardMarks::default(),
             bot_mode: "ever".to_string(),
-            bot_sims: 400,
+            bot_sims: 800,
+            bot_ponder: true,
             calib_cache: None,
             calib_status: String::new(),
             bot_window_open: true,
@@ -1286,12 +1288,16 @@ impl Chess4pApp {
                                 .speed(10)
                                 .range(16..=100_000),
                         );
-                        for (label, v) in [("128", 128u32), ("400", 400), ("1600", 1600)] {
+                        for (label, v) in [("256", 256u32), ("800", 800), ("2400", 2400)] {
                             if ui.small_button(label).clicked() {
                                 self.bot_sims = v;
                             }
                         }
                     });
+                    ui.checkbox(
+                        &mut self.bot_ponder,
+                        "🧠 Думать в чужие ходы (ponder — быстрее свои ходы)",
+                    );
                     ui.horizontal(|ui| {
                         if busy_bot {
                             ui.label(RichText::new("🤖 Бот играет (лог в консоли ниже)...").strong());
@@ -1309,12 +1315,15 @@ impl Chess4pApp {
                                 title: "Игра ботом",
                                 desc: "",
                             };
-                            let args = vec![
+                            let mut args = vec![
                                 "--mode".to_string(),
                                 self.bot_mode.clone(),
                                 "--sims".to_string(),
                                 self.bot_sims.to_string(),
                             ];
+                            if !self.bot_ponder {
+                                args.push("--no-ponder".to_string());
+                            }
                             self.runner.spawn(&def, &python, &bot_dir, &args, false, &mut fail);
                             self.status = "🤖 Бот запущен: сам определит свой цвет и будет ждать его таймер".into();
                         }

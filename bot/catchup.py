@@ -188,11 +188,24 @@ def run_catchup(game, detector, tracker, recorder, timer, engine,
 
 
 def burst_detect_move(game, detector, turn, last_board, diff_fn,
-                      max_wait=8.0):
+                      max_wait=8.0, consensus_fn=None):
     """После смены таймера: снимки в цикле, пока ход не распознан.
-    Каждый снимок сразу проверяется подсветкой и диффом (быстрая реакция)."""
+    Каждый снимок сразу проверяется подсветкой и диффом (быстрая реакция).
+    Со второй половины окна периодически пробуем консенсус из нескольких
+    снимков (надёжнее, когда одиночные детекции шумят)."""
     t0 = time.time()
+    last_consensus = 0.0
     while time.time() - t0 < max_wait:
+        if (
+            consensus_fn is not None
+            and time.time() - t0 > max_wait * 0.4
+            and time.time() - last_consensus > 1.5
+        ):
+            last_consensus = time.time()
+            board = consensus_fn()
+            mv = diff_fn(game, last_board, board, turn)
+            if mv:
+                return board, mv
         shot = capture_screen()
         hl = detect_move_highlight(shot, detector.cal)
         if hl and hl["color"] == turn:
