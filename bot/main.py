@@ -38,6 +38,12 @@ from engine_wrapper import EngineWrapper
 from move_executor import execute_move, human_think_delay
 from human_input_watcher import TimerDetector, calibrate_timers
 from board_detector import BoardDetector, iter_pieces
+
+
+# Файлы управления из GUI (создаются/удаляются чекбоксом «Играть»)
+BOT_DIR = os.path.dirname(os.path.abspath(__file__))
+PLAY_FLAG = os.path.join(BOT_DIR, "gui_play.flag")
+PAUSE_FLAG = os.path.join(BOT_DIR, "gui_pause.flag")
 from state_sync import (
     KingTracker,
     detect_statuses,
@@ -480,6 +486,12 @@ def run_analysis_mode(
         pgn = f.read()
 
     game = chess4p_ai.PyGameState()
+
+    for f in (PLAY_FLAG, PAUSE_FLAG):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
     err = game.load_pgn_verbose(pgn)
     if err:
         print(f"❌ Ошибка разбора PGN: {err}")
@@ -530,6 +542,7 @@ def run_live_mode(
     max_time=None,
     catchup=False,
     ponder=True,
+    standby=False,
 ):
     mode = MODES[mode_id]
 
@@ -566,6 +579,17 @@ def run_live_mode(
     recorder = GameRecorder()
     pending_status = {}
 
+    if standby:
+        print("🟡 STANDBY: движок и калибровка готовы. Поставьте галочку «Играть» в окне бота.")
+        while not os.path.exists(PLAY_FLAG):
+            time.sleep(0.5)
+            print(".", end="", flush=True)
+        try:
+            os.remove(PLAY_FLAG)
+        except OSError:
+            pass
+        print("\n✅ Играть! Синхронизируюсь с доской...")
+
     time.sleep(2)
     if catchup:
         game, recorder, last_board = run_catchup(
@@ -587,6 +611,10 @@ def run_live_mode(
 
     try:
         while not game.is_game_over():
+            # ⏸ Пауза по галочке из GUI (снять галочку = пауза)
+            while os.path.exists(PAUSE_FLAG):
+                time.sleep(0.5)
+
             # ---------- -1. Защита от паники Rust-движка (PanicException) ----------
             try:
                 # Пробуем сгенерировать ходы. Если состояние битое, движок упадет здесь.
@@ -1027,6 +1055,12 @@ def main():
     )
 
     parser.add_argument(
+        "--standby",
+        action="store_true",
+        help="Standby: загрузиться и ждать галочку «Играть» (gui_play.flag)",
+    )
+
+    parser.add_argument(
         "--no-ponder",
         action="store_true",
         help="Отключить фоновый поиск во время ходов соперников",
@@ -1075,6 +1109,7 @@ def main():
             max_time=args.time,
             catchup=args.catchup,
             ponder=not args.no_ponder,
+            standby=args.standby,
         )
 
 

@@ -105,6 +105,7 @@ pub struct Chess4pApp {
     calib_cache: Option<u64>,
     calib_status: String,
     bot_window_open: bool,
+    play_checked: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -263,6 +264,7 @@ impl Chess4pApp {
             calib_cache: None,
             calib_status: String::new(),
             bot_window_open: true,
+            play_checked: false,
         };
 
         // Диагностический режим: CHESS4P_GUI_AUTOBOT=1 — все 4 места боты
@@ -463,6 +465,22 @@ impl Chess4pApp {
         if self.state.is_game_over() && !self.game_over_played {
             self.game_over_played = true;
             self.sounds.play(SoundEvent::GameEnd);
+        }
+    }
+
+    fn flag_path(&self, name: &str) -> std::path::PathBuf {
+        std::path::Path::new(&self.settings.bot_dir).join(name)
+    }
+
+    fn set_play_flags(&self, checked: bool) {
+        let play = self.flag_path("gui_play.flag");
+        let pause = self.flag_path("gui_pause.flag");
+        if checked {
+            let _ = std::fs::write(&play, b"");
+            let _ = std::fs::remove_file(&pause);
+        } else {
+            let _ = std::fs::remove_file(&play);
+            let _ = std::fs::write(&pause, b"");
         }
     }
 
@@ -722,6 +740,11 @@ impl eframe::App for Chess4pApp {
                 Some(0) => self.status = format!("✅ {title} — завершён"),
                 Some(c) => self.status = format!("⚠ {title} — код выхода {c}"),
                 None => self.status = format!("⚠ {title} — аварийно завершён"),
+            }
+            if title == "Игра ботом" {
+                let _ = std::fs::remove_file(self.flag_path("gui_play.flag"));
+                let _ = std::fs::remove_file(self.flag_path("gui_pause.flag"));
+                self.play_checked = false;
             }
         }
 
@@ -1300,13 +1323,16 @@ impl Chess4pApp {
                     );
                     ui.horizontal(|ui| {
                         if busy_bot {
-                            ui.label(RichText::new("🤖 Бот играет (лог в консоли ниже)...").strong());
+                            ui.label(RichText::new("🟢 Бот в фоне (движок загружен)").strong());
                             if let Some(id) = kill_bot {
                                 if ui.button("⏹ Остановить").clicked() {
                                     self.runner.kill(id);
+                                    let _ = std::fs::remove_file(self.flag_path("gui_play.flag"));
+                                    let _ = std::fs::remove_file(self.flag_path("gui_pause.flag"));
+                                    self.play_checked = false;
                                 }
                             }
-                        } else if ui.button("▶ Играть ботом").clicked() {
+                        } else if ui.button("🚀 Запустить бота (standby)").clicked() {
                             let python = self.settings.python_path.clone();
                             let bot_dir = self.settings.bot_dir.clone();
                             let mut fail = |msg: String| self.error = Some(msg);
@@ -1320,21 +1346,40 @@ impl Chess4pApp {
                                 self.bot_mode.clone(),
                                 "--sims".to_string(),
                                 self.bot_sims.to_string(),
+                                "--standby".to_string(),
                             ];
                             if !self.bot_ponder {
                                 args.push("--no-ponder".to_string());
                             }
                             self.runner.spawn(&def, &python, &bot_dir, &args, false, &mut fail);
-                            self.status = "🤖 Бот запущен: сам определит свой цвет и будет ждать его таймер".into();
+                            if self.play_checked {
+                                let _ = std::fs::write(self.flag_path("gui_play.flag"), b"");
+                            }
+                            self.status = "🟡 Бот в standby: движок загружен, нажмите «▶ Играть» когда начнётся партия".into();
                         }
                     });
                     ui.label(
                         RichText::new(
-                            "Бот определит свой цвет, будет ждать свой таймер и делать ходы сам.                              Лог — в консоли ниже.",
+                            "Запустите бота заранее (движок загрузится и будет ждать).                              Когда на chess.com начнётся партия — поставьте галочку «Играть».                              Сняли галочку — пауза.",
                         )
                         .weak()
                         .small(),
                     );
+
+                    // ▶ Играть: старт из standby / пауза в игре
+                    let prev = self.play_checked;
+                    ui.add_enabled(
+                        busy_bot,
+                        egui::Checkbox::new(&mut self.play_checked, "▶ Играть"),
+                    );
+                    if busy_bot && self.play_checked != prev {
+                        self.set_play_flags(self.play_checked);
+                        self.status = if self.play_checked {
+                            "▶ Бот подключается к партии...".into()
+                        } else {
+                            "⏸ Пауза".into()
+                        };
+                    }
                 });
 
                 ui.add_space(8.0);
