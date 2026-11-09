@@ -104,8 +104,8 @@ PLAYABLE_SQUARES = 160
 # Human-like задержки / мышь
 # ============================================================
 
-THINK_TIME_MIN = 0.8
-THINK_TIME_MAX = 2.0
+THINK_TIME_MIN = 0.5
+THINK_TIME_MAX = 1.4
 
 MOUSE_MOVE_DURATION = (0.12, 0.30)
 CLICK_PAUSE = (0.03, 0.08)
@@ -249,7 +249,7 @@ LIVE_CFG = {
     "resigned_move_timeout": 60.0,
 
     # Пауза на анимацию после хода.
-    "animation_sleep": 1.2,
+    "animation_sleep": 0.5,
 
     # Подтверждать ход бота по доске перед make_move_fast_idx.
     "confirm_bot_move": True,

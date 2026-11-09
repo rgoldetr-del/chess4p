@@ -188,22 +188,20 @@ def run_catchup(game, detector, tracker, recorder, timer, engine,
 
 
 def burst_detect_move(game, detector, turn, last_board, diff_fn,
-                      max_wait=8.0, burst=4):
-    """После смены таймера: серия снимков, пока ход не распознан.
-    Сначала подсветка (быстро), потом дифф (надёжно)."""
+                      max_wait=8.0):
+    """После смены таймера: снимки в цикле, пока ход не распознан.
+    Каждый снимок сразу проверяется подсветкой и диффом (быстрая реакция)."""
     t0 = time.time()
     while time.time() - t0 < max_wait:
-        shots = [capture_screen() for _ in range(burst)]
-        for shot in shots:
-            hl = detect_move_highlight(shot, detector.cal)
-            if hl and hl["color"] == turn:
-                idx = match_highlight_to_legal(game, hl)
-                if idx is not None:
-                    return detector.detect_full_board(shot), idx_to_coords(idx)
-        for shot in shots:
-            board = detector.detect_full_board(shot)
-            mv = diff_fn(game, last_board, board, turn)
-            if mv:
-                return board, mv
-        time.sleep(0.05)
+        shot = capture_screen()
+        hl = detect_move_highlight(shot, detector.cal)
+        if hl and hl["color"] == turn:
+            idx = match_highlight_to_legal(game, hl)
+            if idx is not None:
+                return detector.detect_full_board(shot), idx_to_coords(idx)
+        board = detector.detect_full_board(shot)
+        mv = diff_fn(game, last_board, board, turn)
+        if mv:
+            return board, mv
+        time.sleep(0.08)
     return detector.detect_full_board(capture_screen()), None

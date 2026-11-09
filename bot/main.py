@@ -287,25 +287,47 @@ def get_consensus_board(detector, num_shots=3):
 
 def wait_action(timer, use_timer, current, detector, last_board, timeout=300.0):
     """
+    Ждёт действия: смену таймера ИЛИ устойчивое изменение доски (что раньше).
+    Раньше при откалиброванных таймерах мы ждали ТОЛЬКО таймер, и если детект
+    таймера промахивался - висели до timeout (до 300 с).
+
     Возвращает:
     (acted: bool, active_color: int | None)
     """
-    if use_timer:
-        act, _ = timer.wait_for_turn_change(current, timeout=timeout)
-        return act is not None, act
-
     deadline = time.time() + timeout
+    prev_diff_squares = None
+
     while time.time() < deadline:
-        time.sleep(0.3)
-        curr = detector.detect_full_board(capture_screen())
-        diff = sum(
-            1
+        if use_timer:
+            try:
+                act, _ = timer.wait_for_turn_change(current, timeout=0.3)
+                if act is not None:
+                    return True, act
+            except Exception:
+                pass
+
+        time.sleep(0.25)
+        try:
+            curr = detector.detect_full_board(capture_screen())
+        except Exception:
+            continue
+
+        changed = frozenset(
+            (x, y)
             for y in range(1, 15)
             for x in range(1, 15)
             if curr[y][x] != last_board[y][x]
         )
-        if diff >= 2:
-            return True, None
+
+        if len(changed) >= 2:
+            # Подтверждаем изменение дважды подряд (защита от анимаций/миганий):
+            # набор изменившихся клеток должен повторяться в двух кадрах подряд.
+            if changed == prev_diff_squares:
+                return True, None
+            prev_diff_squares = changed
+        else:
+            prev_diff_squares = None
+
     return False, None
 
 
