@@ -118,10 +118,35 @@ impl Chess4pApp {
         let font_ok = install_piece_font(cc);
 
         let mut settings = load_settings();
-        if settings.bot_dir.is_empty() || !std::path::Path::new(&settings.bot_dir).exists() {
-            // По умолчанию — папка bot рядом с репозиторием
+        // Поиск папки bot/: заданная в настройках -> рядом с exe -> рядом с exe на уровень выше -> C:\chess4p\bot
+        {
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+            if !settings.bot_dir.is_empty() {
+                candidates.push(std::path::PathBuf::from(&settings.bot_dir));
+            }
             if let Ok(cwd) = std::env::current_dir() {
-                settings.bot_dir = cwd.join("bot").to_string_lossy().to_string();
+                candidates.push(cwd.join("bot"));
+            }
+            if let Some(d) = &exe_dir {
+                candidates.push(d.join("bot"));
+                if let Some(parent) = d.parent() {
+                    candidates.push(parent.join("bot"));
+                }
+            }
+            candidates.push(std::path::PathBuf::from(r"C:\chess4p\bot"));
+
+            if let Some(found) = candidates
+                .iter()
+                .find(|p| p.join("config.py").exists() || p.join("calibration.py").exists())
+            {
+                settings.bot_dir = found.to_string_lossy().to_string();
+            } else if settings.bot_dir.is_empty() {
+                if let Ok(cwd) = std::env::current_dir() {
+                    settings.bot_dir = cwd.join("bot").to_string_lossy().to_string();
+                }
             }
         }
 
@@ -1103,6 +1128,21 @@ impl Chess4pApp {
                             Color32::from_rgb(230, 120, 60)
                         }),
                     );
+                    ui.label(
+                        RichText::new(format!("Папка бота: {}", self.settings.bot_dir)).weak().small(),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.small_button("📁 Указать папку bot...").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_title("Выберите папку bot (где config.py)")
+                                .pick_folder()
+                            {
+                                self.settings.bot_dir = path.to_string_lossy().to_string();
+                                self.calib_cache = None; // перечитать статус
+                                self.save_settings();
+                            }
+                        }
+                    });
                     ui.horizontal(|ui| {
                         let python = self.settings.python_path.clone();
                         let bot_dir = self.settings.bot_dir.clone();

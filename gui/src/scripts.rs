@@ -75,7 +75,13 @@ impl ScriptRunner {
         let child = match child {
             Ok(c) => c,
             Err(e) => {
-                on_fail(format!("❌ Не удалось запустить {}: {e}", script.path));
+                let mut msg = format!("❌ Не удалось запустить {}: {e}", script.path);
+                if e.raw_os_error() == Some(267) {
+                    msg.push_str(
+                        " — папка бота не найдена. Укажите её кнопкой «📁 Указать папку bot»",
+                    );
+                }
+                on_fail(msg);
                 return;
             }
         };
