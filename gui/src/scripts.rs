@@ -49,7 +49,10 @@ impl ScriptRunner {
             .current_dir(bot_dir)
             // stdout в пайпе — cp1251; эмодзи в скриптах ломают print().
             .env("PYTHONIOENCODING", "utf-8")
-            .env("PYTHONUTF8", "1");
+            .env("PYTHONUTF8", "1")
+            // отключаем буферизацию stdout: иначе лог бота виден только
+            // после завершения процесса
+            .env("PYTHONUNBUFFERED", "1");
 
         // Интерактивным скриптам (input(), OpenCV-окна) нужна своя консоль:
         // вывод идёт в неё, а не в лог GUI.
