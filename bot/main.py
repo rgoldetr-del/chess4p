@@ -778,7 +778,11 @@ def run_live_mode(
     try:
         while not game.is_game_over():
             # ⏸ Пауза по галочке из GUI (снять галочку = пауза)
+            pause_logged = False
             while os.path.exists(PAUSE_FLAG):
+                if not pause_logged:
+                    print("⏸ ПАУЗА: галочка «Играть» снята. Поставьте её, чтобы продолжить.")
+                    pause_logged = True
                 time.sleep(0.5)
 
             if watcher.board is None:

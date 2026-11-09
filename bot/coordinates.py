@@ -63,15 +63,17 @@ def get_orientation():
     return ORIENTATION
 
 # Поворот координат: движок (x, y) -> экран (sx, sy)
+# Ось Y экрана идёт СВЕРХУ ВНИЗ, ось Y движка — СНИЗУ ВВЕРХ (красный дом y=1).
+# Поэтому даже без поворота есть инверсия: экран y=14 <-> движок y=1.
 _ROT_E2S = {
-    "red":    lambda x, y: (x, y),
+    "red":    lambda x, y: (x, 15 - y),
     "yellow": lambda x, y: (15 - x, y),
     "blue":   lambda x, y: (15 - y, 15 - x),
     "green":  lambda x, y: (y, x),
 }
 # Инверсия: экран -> движок
 _ROT_S2E = {
-    "red":    lambda sx, sy: (sx, sy),
+    "red":    lambda sx, sy: (sx, 15 - sy),
     "yellow": lambda sx, sy: (15 - sx, sy),
     "blue":   lambda sx, sy: (15 - sy, 15 - sx),
     "green":  lambda sx, sy: (sy, sx),
@@ -99,3 +101,18 @@ def engine_color_to_screen(name):
     m = _COLOR_MAP_S2E.get(ORIENTATION, {})
     inv = {v: k for k, v in m.items()}
     return inv.get(name, name)
+
+
+def screen_color_idx_to_engine(ci):
+    """Индекс абсолютного цвета экрана -> индекс цвета движка."""
+    from config import COLOR_ORDER
+    name = COLOR_ORDER[max(0, min(3, int(ci)))]
+    eng = screen_color_to_engine(name)
+    return COLOR_ORDER.index(eng)
+
+def engine_color_idx_to_screen(ci):
+    """Индекс цвета движка -> индекс абсолютного цвета экрана."""
+    from config import COLOR_ORDER
+    name = COLOR_ORDER[max(0, min(3, int(ci)))]
+    scr = engine_color_to_screen(name)
+    return COLOR_ORDER.index(scr)
