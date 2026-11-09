@@ -9,7 +9,7 @@ use chess4p_game::{Color, GameState, Move};
 
 use crate::board::{self, BoardResponse, PLAYER_COLORS, PLAYER_NAMES};
 use crate::engine::{Engine, EngineSearch};
-use crate::scripts::{ScriptRunner, SCRIPTS};
+use crate::scripts::ScriptRunner;
 use crate::sound::{SoundEvent, SoundPlayer};
 
 // ============================================================
@@ -1260,42 +1260,6 @@ impl Chess4pApp {
                         .small(),
                     );
                 });
-
-                ui.add_space(8.0);
-                ui.heading("Все скрипты");
-                egui::Grid::new("scripts_grid")
-                    .striped(true)
-                    .num_columns(3)
-                    .min_col_width(120.0)
-                    .show(ui, |ui| {
-                        for script in SCRIPTS {
-                            ui.label(
-                                RichText::new(script.title)
-                                    .strong(),
-                            );
-                            ui.label(RichText::new(script.desc).weak().small());
-                            let busy = self
-                                .runner
-                                .running
-                                .iter()
-                                .any(|r| r.title == script.title);
-                            let btn = if busy {
-                                egui::Button::new("⏳ идёт")
-                            } else {
-                                egui::Button::new("запустить")
-                            };
-                            if ui
-                                .add_enabled(!busy, btn)
-                                .clicked()
-                            {
-                                let bot_dir = self.settings.bot_dir.clone();
-                                let python = self.settings.python_path.clone();
-                                let mut fail = |msg: String| self.error = Some(msg);
-                                self.runner.spawn(script, &python, &bot_dir, &[], false, &mut fail);
-                            }
-                            ui.end_row();
-                        }
-                    });
 
                 ui.add_space(8.0);
 

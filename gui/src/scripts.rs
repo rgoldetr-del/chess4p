@@ -11,20 +11,6 @@ pub struct ScriptDef {
     pub desc: &'static str,   // что делает
 }
 
-pub const SCRIPTS: &[ScriptDef] = &[
-    ScriptDef { path: "create_templates.py", title: "Создать шаблоны", desc: "Снятие шаблонов фигур с доски" },
-    ScriptDef { path: "create_promoted_gray_templates.py", title: "Шаблоны серых", desc: "Шаблоны превращённых/серых фигур" },
-    ScriptDef { path: "clean_gray_templates.py", title: "Очистка серых шаблонов", desc: "Удаление пустых/мусорных шаблонов" },
-    ScriptDef { path: "tools/check_environment.py", title: "Проверка окружения", desc: "Диагностика зависимостей и модели" },
-    ScriptDef { path: "tools/benchmark.py", title: "Бенчмарк бота", desc: "Скорость распознавания/MCTS" },
-    ScriptDef { path: "download_pgn4_auto.py", title: "Скачать PGN4 (auto)", desc: "Скачивание партий chess.com" },
-    ScriptDef { path: "download_all_pgn4_v2.py", title: "Скачать PGN4 (все)", desc: "Массовое скачивание архива партий" },
-    ScriptDef { path: "parse_ffa_dataset.py", title: "Парсинг FFA", desc: "Разбор скачанных PGN в датасет" },
-    ScriptDef { path: "filter_clean_ffa.py", title: "Фильтр чистых FFA", desc: "Отбор чистых FFA-партий для обучения" },
-    ScriptDef { path: "validate_and_filter_pgn4.py", title: "Валидация PGN4", desc: "Проверка и фильтрация PGN4 файлов" },
-    ScriptDef { path: "build.py", title: "Сборка chess4p_ai", desc: "cargo build + maturin develop" },
-    ScriptDef { path: "build_soup.py", title: "Soup-модель", desc: "Обучение soup из чекпойнтов" },
-];
 
 pub struct RunningScript {
     pub id: u64,
