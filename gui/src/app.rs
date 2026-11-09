@@ -99,6 +99,10 @@ pub struct Chess4pApp {
     board_zoom: f32,
     game_over_played: bool,
     marks: board::BoardMarks,
+    bot_mode: String,
+    bot_sims: u32,
+    calib_cache: Option<u64>,
+    calib_status: String,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -182,6 +186,10 @@ impl Chess4pApp {
             board_zoom,
             game_over_played: false,
             marks: board::BoardMarks::default(),
+            bot_mode: "ever".to_string(),
+            bot_sims: 400,
+            calib_cache: None,
+            calib_status: String::new(),
         };
 
         // Диагностический режим: CHESS4P_GUI_AUTOBOT=1 — все 4 места боты
@@ -383,6 +391,40 @@ impl Chess4pApp {
             self.game_over_played = true;
             self.sounds.play(SoundEvent::GameEnd);
         }
+    }
+
+    /// Статус калибровки (перечитывается при изменении файла)
+    fn refresh_calibration_status(&mut self) {
+        let path = std::path::Path::new(&self.settings.bot_dir).join("calibration_data.json");
+        let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        if self.calib_cache != Some(len) {
+            self.calib_cache = Some(len);
+            self.calib_status = if len == 0 {
+                "❌ калибровка не выполнена".to_string()
+            } else {
+                match std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                {
+                    Some(v) => {
+                        let cell = v.get("cell_size").and_then(|x| x.as_u64()).unwrap_or(0);
+                        let w = v.get("board_width").and_then(|x| x.as_u64()).unwrap_or(0);
+                        format!("✅ калибровка: клетка {cell}px, доска {w}×{w}px")
+                    }
+                    None => "⚠ файл калибровки повреждён".to_string(),
+                }
+            };
+        }
+    }
+
+    fn delete_calibration(&mut self) {
+        let dir = std::path::Path::new(&self.settings.bot_dir);
+        for f in ["calibration_data.json", "calibration_screenshot.png", "board_crop.png"] {
+            let _ = std::fs::remove_file(dir.join(f));
+        }
+        self.calib_cache = None;
+        self.calib_status = "❌ калибровка не выполнена".to_string();
+        self.status = "Калибровка удалена".into();
     }
 
     fn new_game(&mut self) {
@@ -699,7 +741,9 @@ impl Chess4pApp {
 
             // Отображаемое состояние (live или review)
             let (display, review_mode) = if let Some(idx) = self.review_idx {
-                let mut st = self.state.clone_light();
+                // ВАЖНО: полный клон — clone_light() не копирует history,
+                // и go_to_move() на нём всегда проваливался.
+                let mut st = self.state.clone();
                 st.go_to_move(idx);
                 (st, true)
             } else {
@@ -1031,6 +1075,154 @@ impl Chess4pApp {
             ui.add_space(6.0);
 
             ScrollArea::vertical().show(ui, |ui| {
+                // ================================================
+                // Секция «Экранный бот»
+                // ================================================
+                self.refresh_calibration_status();
+                let busy_cal = self.runner.running.iter().any(|r| r.title == "Калибровка");
+                let busy_check = self.runner.running.iter().any(|r| r.title == "Проверка калибровки");
+                let busy_bot = self.runner.running.iter().any(|r| r.title == "Игра ботом");
+                let calib_exists = self.calib_cache.unwrap_or(0) > 0;
+                let calib_status = self.calib_status.clone();
+                let kill_bot = self
+                    .runner
+                    .running
+                    .iter()
+                    .find(|r| r.title == "Игра ботом")
+                    .map(|r| r.id);
+
+                ui.group(|ui| {
+                    ui.heading("🎮 Экранный бот (chess.com)");
+
+                    // --- Калибровка ---
+                    ui.label("Калибровка доски:");
+                    ui.label(
+                        RichText::new(calib_status.clone()).color(if calib_exists {
+                            Color32::from_rgb(80, 200, 90)
+                        } else {
+                            Color32::from_rgb(230, 120, 60)
+                        }),
+                    );
+                    ui.horizontal(|ui| {
+                        let python = self.settings.python_path.clone();
+                        let bot_dir = self.settings.bot_dir.clone();
+                        let mut fail = |msg: String| self.error = Some(msg);
+
+                        let cal_label = if calib_exists {
+                            "✏️ Перекалибровать"
+                        } else {
+                            "📐 Калибровать"
+                        };
+                        if ui
+                            .add_enabled(!busy_cal, egui::Button::new(cal_label))
+                            .clicked()
+                        {
+                            let def = crate::scripts::ScriptDef {
+                                path: "calibration.py",
+                                title: "Калибровка",
+                                desc: "",
+                            };
+                            self.runner.spawn(&def, &python, &bot_dir, &[], true, &mut fail);
+                            self.status = "Калибровка: следуйте инструкциям в открывшемся окне (2 клика по углам доски, WASD/Q/E подгонка, Enter — сохранить)".into();
+                        }
+                        if ui
+                            .add_enabled(!busy_check, egui::Button::new("🔍 Проверить"))
+                            .clicked()
+                        {
+                            let def = crate::scripts::ScriptDef {
+                                path: "tools/check_calibration.py",
+                                title: "Проверка калибровки",
+                                desc: "",
+                            };
+                            self.runner.spawn(&def, &python, &bot_dir, &[], true, &mut fail);
+                        }
+                        if ui
+                            .add_enabled(calib_exists && !busy_cal, egui::Button::new("🗑 Удалить"))
+                            .clicked()
+                        {
+                            self.delete_calibration();
+                        }
+                    });
+                    ui.label(
+                        RichText::new(
+                            "Выделите доску двумя кликами (верхний-левый и нижний-правый углы),                              подгоните сетку (WASD/Q/E), Enter — сохранить.",
+                        )
+                        .weak()
+                        .small(),
+                    );
+
+                    ui.separator();
+
+                    // --- Игра ботом ---
+                    ui.label("Игра ботом на chess.com:");
+                    ui.horizontal(|ui| {
+                        ui.label("Цвет:");
+                        egui::ComboBox::from_id_salt("bot_mode")
+                            .selected_text(match self.bot_mode.as_str() {
+                                "red" => "красный",
+                                "blue" => "синий",
+                                "yellow" => "жёлтый",
+                                "green" => "зелёный",
+                                _ => "все цвета",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.bot_mode, "ever".to_string(), "все цвета");
+                                ui.selectable_value(&mut self.bot_mode, "red".to_string(), "красный");
+                                ui.selectable_value(&mut self.bot_mode, "blue".to_string(), "синий");
+                                ui.selectable_value(&mut self.bot_mode, "yellow".to_string(), "жёлтый");
+                                ui.selectable_value(&mut self.bot_mode, "green".to_string(), "зелёный");
+                            });
+
+                        ui.label("Симуляций:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.bot_sims)
+                                .speed(10)
+                                .range(16..=100_000),
+                        );
+                        for (label, v) in [("128", 128u32), ("400", 400), ("1600", 1600)] {
+                            if ui.small_button(label).clicked() {
+                                self.bot_sims = v;
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if busy_bot {
+                            ui.label(RichText::new("🤖 Бот играет (лог в консоли ниже)...").strong());
+                            if let Some(id) = kill_bot {
+                                if ui.button("⏹ Остановить").clicked() {
+                                    self.runner.kill(id);
+                                }
+                            }
+                        } else if ui.button("▶ Играть ботом").clicked() {
+                            let python = self.settings.python_path.clone();
+                            let bot_dir = self.settings.bot_dir.clone();
+                            let mut fail = |msg: String| self.error = Some(msg);
+                            let def = crate::scripts::ScriptDef {
+                                path: "main.py",
+                                title: "Игра ботом",
+                                desc: "",
+                            };
+                            let args = vec![
+                                "--mode".to_string(),
+                                self.bot_mode.clone(),
+                                "--sims".to_string(),
+                                self.bot_sims.to_string(),
+                            ];
+                            self.runner.spawn(&def, &python, &bot_dir, &args, false, &mut fail);
+                            self.status = "🤖 Бот запущен: сам определит свой цвет и будет ждать его таймер".into();
+                        }
+                    });
+                    ui.label(
+                        RichText::new(
+                            "Бот определит свой цвет, будет ждать свой таймер и делать ходы сам.                              Лог — в консоли ниже.",
+                        )
+                        .weak()
+                        .small(),
+                    );
+                });
+
+                ui.add_space(8.0);
+                ui.heading("Все скрипты");
                 egui::Grid::new("scripts_grid")
                     .striped(true)
                     .num_columns(3)
@@ -1059,7 +1251,7 @@ impl Chess4pApp {
                                 let bot_dir = self.settings.bot_dir.clone();
                                 let python = self.settings.python_path.clone();
                                 let mut fail = |msg: String| self.error = Some(msg);
-                                self.runner.spawn(script, &python, &bot_dir, &mut fail);
+                                self.runner.spawn(script, &python, &bot_dir, &[], false, &mut fail);
                             }
                             ui.end_row();
                         }

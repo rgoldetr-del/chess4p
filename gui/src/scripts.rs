@@ -12,13 +12,10 @@ pub struct ScriptDef {
 }
 
 pub const SCRIPTS: &[ScriptDef] = &[
-    ScriptDef { path: "main.py", title: "▶ Экранный бот", desc: "Игра бота на chess.com (нужна калибровка)" },
-    ScriptDef { path: "calibration.py", title: "Калибровка экрана", desc: "Разметка клеток/таймеров под ваш монитор" },
     ScriptDef { path: "create_templates.py", title: "Создать шаблоны", desc: "Снятие шаблонов фигур с доски" },
     ScriptDef { path: "create_promoted_gray_templates.py", title: "Шаблоны серых", desc: "Шаблоны превращённых/серых фигур" },
     ScriptDef { path: "clean_gray_templates.py", title: "Очистка серых шаблонов", desc: "Удаление пустых/мусорных шаблонов" },
     ScriptDef { path: "tools/check_environment.py", title: "Проверка окружения", desc: "Диагностика зависимостей и модели" },
-    ScriptDef { path: "tools/check_calibration.py", title: "Проверка калибровки", desc: "Визуальная проверка привязки клеток" },
     ScriptDef { path: "tools/benchmark.py", title: "Бенчмарк бота", desc: "Скорость распознавания/MCTS" },
     ScriptDef { path: "download_pgn4_auto.py", title: "Скачать PGN4 (auto)", desc: "Скачивание партий chess.com" },
     ScriptDef { path: "download_all_pgn4_v2.py", title: "Скачать PGN4 (все)", desc: "Массовое скачивание архива партий" },
@@ -52,18 +49,28 @@ impl ScriptRunner {
         script: &ScriptDef,
         python: &str,
         bot_dir: &str,
+        args: &[String],
+        new_console: bool,
         on_fail: &mut dyn FnMut(String),
     ) {
         self.generation += 1;
         let gen = self.generation;
         let title = script.title.to_string();
 
-        let child = Command::new(python)
-            .arg(script.path)
-            .current_dir(bot_dir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
+        let mut cmd = Command::new(python);
+        cmd.arg(script.path)
+            .args(args)
+            .current_dir(bot_dir);
+
+        // Интерактивным скриптам (input(), OpenCV-окна) нужна своя консоль:
+        // вывод идёт в неё, а не в лог GUI.
+        if new_console {
+            cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE
+        } else {
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
+
+        let child = cmd.spawn();
 
         let child = match child {
             Ok(c) => c,
@@ -75,7 +82,8 @@ impl ScriptRunner {
         let child = Arc::new(Mutex::new(child));
         let shared_log = self.log.clone();
 
-        // Читаем stdout и stderr в фоновых потоках
+        // Читаем stdout и stderr в фоновых потоках (только если пайп есть)
+        if !new_console {
         {
             let child_ref = child.clone();
             let shared = shared_log.clone();
@@ -118,6 +126,7 @@ impl ScriptRunner {
                 }
             });
         }
+        } // if !new_console
 
         self.next_id += 1;
         self.running.push(RunningScript {
